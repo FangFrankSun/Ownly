@@ -1,6 +1,7 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { useAuth } from './auth-context';
+import { supabase } from './supabase-client';
 
 export type TaskCategory = {
   id: string;
@@ -49,66 +50,28 @@ type TasksContextValue = {
   toggleTaskDone: (taskId: string) => void;
 };
 
-type UserTaskData = {
-  categories: TaskCategory[];
-  tasks: TaskItem[];
+type TaskRow = {
+  id: string;
+  title: string;
+  notes: string | null;
+  category_id: string;
+  scheduled_at: string;
+  repeatable: boolean;
+  done: boolean;
+  created_at: number;
 };
 
-const seedCategories: TaskCategory[] = [
-  { id: 'cat-work', name: 'Work', color: '#4C6FFF' },
-  { id: 'cat-health', name: 'Health', color: '#17A673' },
-  { id: 'cat-life', name: 'Personal', color: '#FF8A4C' },
-];
-
-function todayAt(hour: number, minute: number) {
-  const date = new Date();
-  date.setHours(hour, minute, 0, 0);
-  return date.toISOString();
-}
-
-function buildInitialTasks(): TaskItem[] {
-  return [
-    {
-      id: 'task-1',
-      title: 'Ship sprint recap',
-      notes: 'Share highlights in team channel',
-      categoryId: 'cat-work',
-      scheduledAt: todayAt(9, 30),
-      repeatable: false,
-      done: true,
-      createdAt: Date.now() - 10000,
-    },
-    {
-      id: 'task-2',
-      title: 'Plan tomorrow routine',
-      notes: 'Set priorities before lunch',
-      categoryId: 'cat-life',
-      scheduledAt: todayAt(13, 15),
-      repeatable: true,
-      done: false,
-      createdAt: Date.now() - 9000,
-    },
-    {
-      id: 'task-3',
-      title: '20-minute deep stretch',
-      notes: 'Lower back + hamstrings',
-      categoryId: 'cat-health',
-      scheduledAt: todayAt(20, 0),
-      repeatable: true,
-      done: false,
-      createdAt: Date.now() - 8000,
-    },
-  ];
-}
-
-function buildInitialTaskData(): UserTaskData {
-  return {
-    categories: seedCategories.map((category) => ({ ...category })),
-    tasks: buildInitialTasks(),
-  };
-}
+const seedCategoryTemplate = [
+  { name: 'Work', color: '#4C6FFF' },
+  { name: 'Health', color: '#17A673' },
+  { name: 'Personal', color: '#FF8A4C' },
+] as const;
 
 const TasksContext = createContext<TasksContextValue | null>(null);
+
+function createId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
 
 function normalizedTimestamp(value: string) {
   const date = new Date(value);
@@ -118,33 +81,164 @@ function normalizedTimestamp(value: string) {
   return date.toISOString();
 }
 
+function toTaskItem(row: TaskRow): TaskItem {
+  return {
+    id: row.id,
+    title: row.title,
+    notes: row.notes ?? '',
+    categoryId: row.category_id,
+    scheduledAt: row.scheduled_at,
+    repeatable: row.repeatable,
+    done: row.done,
+    createdAt: row.created_at ?? Date.now(),
+  };
+}
+
+function buildSeedCategories(userId: string): TaskCategory[] {
+  const short = userId.slice(0, 8);
+  return seedCategoryTemplate.map((category, index) => ({
+    id: `cat-${short}-${index}`,
+    name: category.name,
+    color: category.color,
+  }));
+}
+
+async function fetchCloudTaskData(userId: string) {
+  if (!supabase) {
+    return {
+      categories: buildSeedCategories(userId),
+      tasks: [] as TaskItem[],
+    };
+  }
+
+  const categoriesResponse = await supabase
+    .from('task_categories')
+    .select('id,name,color')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (categoriesResponse.error) {
+    throw categoriesResponse.error;
+  }
+
+  let categories = (categoriesResponse.data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    color: row.color,
+  }));
+
+  if (categories.length === 0) {
+    const seed = buildSeedCategories(userId);
+    await supabase.from('task_categories').upsert(
+      seed.map((category) => ({
+        id: category.id,
+        user_id: userId,
+        name: category.name,
+        color: category.color,
+        created_at: Date.now(),
+      })),
+      { onConflict: 'id' }
+    );
+    categories = seed;
+  }
+
+  const tasksResponse = await supabase
+    .from('tasks')
+    .select('id,title,notes,category_id,scheduled_at,repeatable,done,created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (tasksResponse.error) {
+    throw tasksResponse.error;
+  }
+
+  const tasks = (tasksResponse.data as TaskRow[] | null)?.map(toTaskItem) ?? [];
+  return {
+    categories,
+    tasks,
+  };
+}
+
 export function TasksProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [taskDataByUserId, setTaskDataByUserId] = useState<Record<string, UserTaskData>>({});
+  const [categories, setCategories] = useState<TaskCategory[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
 
-  const currentData = useMemo(() => {
-    if (!user) {
-      return buildInitialTaskData();
+  const refreshFromCloud = async (userId: string) => {
+    try {
+      const data = await fetchCloudTaskData(userId);
+      setCategories(data.categories);
+      setTasks(data.tasks);
+    } catch (error) {
+      console.error('Failed to fetch task data from Supabase', error);
     }
-    return taskDataByUserId[user.id] ?? buildInitialTaskData();
-  }, [taskDataByUserId, user]);
+  };
 
-  const categories = currentData.categories;
-  const tasks = currentData.tasks;
+  useEffect(() => {
+    let isMounted = true;
 
-  const updateCurrentUserData = (updater: (current: UserTaskData) => UserTaskData) => {
+    if (!user) {
+      setCategories([]);
+      setTasks([]);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const load = async () => {
+      const data = await fetchCloudTaskData(user.id);
+      if (isMounted) {
+        setCategories(data.categories);
+        setTasks(data.tasks);
+      }
+    };
+
+    void load().catch((error) => {
+      console.error('Failed to fetch task data from Supabase', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  useEffect(() => {
     if (!user) {
       return;
     }
 
-    setTaskDataByUserId((prev) => {
-      const current = prev[user.id] ?? buildInitialTaskData();
-      return {
-        ...prev,
-        [user.id]: updater(current),
-      };
-    });
-  };
+    const interval = setInterval(() => {
+      void refreshFromCloud(user.id);
+    }, 7000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !supabase) {
+      return;
+    }
+
+    const channel = supabase
+      .channel(`tasks-sync-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_categories', filter: `user_id=eq.${user.id}` },
+        () => {
+          void refreshFromCloud(user.id);
+        }
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${user.id}` }, () => {
+        void refreshFromCloud(user.id);
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const addCategory = (name: string, color: string) => {
     const normalizedName = name.trim();
@@ -161,42 +255,91 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       return existing.id;
     }
 
-    const id = `cat-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const nextCategory: TaskCategory = {
-      id,
+    const newCategory: TaskCategory = {
+      id: createId('cat'),
       name: normalizedName,
       color,
     };
 
-    updateCurrentUserData((current) => ({
-      ...current,
-      categories: [...current.categories, nextCategory],
-    }));
-    return id;
+    setCategories((prev) => [...prev, newCategory]);
+
+    if (user && supabase) {
+      void supabase
+        .from('task_categories')
+        .insert({
+          id: newCategory.id,
+          user_id: user.id,
+          name: newCategory.name,
+          color: newCategory.color,
+          created_at: Date.now(),
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.error('Failed to save category to Supabase', error);
+          }
+          void refreshFromCloud(user.id);
+        });
+    }
+
+    return newCategory.id;
   };
 
   const deleteCategory = (categoryId: string) => {
+    if (!user) {
+      return;
+    }
+
     if (categories.length <= 1 || !categories.some((category) => category.id === categoryId)) {
       return;
     }
 
     const fallback = categories.find((category) => category.id !== categoryId);
-
     if (!fallback) {
       return;
     }
 
-    updateCurrentUserData((current) => ({
-      categories: current.categories.filter((category) => category.id !== categoryId),
-      tasks: current.tasks.map((task) =>
+    setCategories((prev) => prev.filter((category) => category.id !== categoryId));
+    setTasks((prev) =>
+      prev.map((task) =>
         task.categoryId === categoryId ? { ...task, categoryId: fallback.id } : task
-      ),
-    }));
+      )
+    );
+
+    if (!supabase) {
+      return;
+    }
+
+    void supabase
+      .from('tasks')
+      .update({ category_id: fallback.id })
+      .eq('user_id', user.id)
+      .eq('category_id', categoryId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to remap tasks for deleted category', error);
+        }
+      });
+
+    void supabase
+      .from('task_categories')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('id', categoryId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to delete category from Supabase', error);
+        }
+        void refreshFromCloud(user.id);
+      });
   };
 
   const addTask = (draft: TaskDraftInput) => {
+    if (!user) {
+      return;
+    }
+
     const newTask: TaskItem = {
-      id: `task-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: createId('task'),
       title: draft.title.trim(),
       notes: draft.notes.trim(),
       categoryId: draft.categoryId,
@@ -206,35 +349,104 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       createdAt: Date.now(),
     };
 
-    updateCurrentUserData((current) => ({
-      ...current,
-      tasks: [newTask, ...current.tasks],
-    }));
+    setTasks((prev) => [newTask, ...prev]);
+
+    if (!supabase) {
+      return;
+    }
+
+    void supabase
+      .from('tasks')
+      .insert({
+        id: newTask.id,
+        user_id: user.id,
+        title: newTask.title,
+        notes: newTask.notes,
+        category_id: newTask.categoryId,
+        scheduled_at: newTask.scheduledAt,
+        repeatable: newTask.repeatable,
+        done: newTask.done,
+        created_at: newTask.createdAt,
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to save task to Supabase', error);
+        }
+        void refreshFromCloud(user.id);
+      });
   };
 
   const updateTask = (taskId: string, draft: TaskDraftInput) => {
-    updateCurrentUserData((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              title: draft.title.trim(),
-              notes: draft.notes.trim(),
-              categoryId: draft.categoryId,
-              scheduledAt: normalizedTimestamp(draft.scheduledAt),
-              repeatable: draft.repeatable,
-            }
-          : task
-      ),
-    }));
+    if (!user) {
+      return;
+    }
+
+    const nextTask = {
+      title: draft.title.trim(),
+      notes: draft.notes.trim(),
+      categoryId: draft.categoryId,
+      scheduledAt: normalizedTimestamp(draft.scheduledAt),
+      repeatable: draft.repeatable,
+    };
+
+    setTasks((prev) =>
+      prev.map((task) => (task.id === taskId ? { ...task, ...nextTask } : task))
+    );
+
+    if (!supabase) {
+      return;
+    }
+
+    void supabase
+      .from('tasks')
+      .update({
+        title: nextTask.title,
+        notes: nextTask.notes,
+        category_id: nextTask.categoryId,
+        scheduled_at: nextTask.scheduledAt,
+        repeatable: nextTask.repeatable,
+      })
+      .eq('user_id', user.id)
+      .eq('id', taskId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to update task in Supabase', error);
+        }
+        void refreshFromCloud(user.id);
+      });
   };
 
   const toggleTaskDone = (taskId: string) => {
-    updateCurrentUserData((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => (task.id === taskId ? { ...task, done: !task.done } : task)),
-    }));
+    if (!user) {
+      return;
+    }
+
+    const existing = tasks.find((task) => task.id === taskId);
+    if (!existing) {
+      return;
+    }
+
+    const nextDone = !existing.done;
+
+    setTasks((prev) =>
+      prev.map((task) => (task.id === taskId ? { ...task, done: nextDone } : task))
+    );
+
+    if (!supabase) {
+      return;
+    }
+
+    void supabase
+      .from('tasks')
+      .update({ done: nextDone })
+      .eq('user_id', user.id)
+      .eq('id', taskId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to toggle task in Supabase', error);
+        }
+        void refreshFromCloud(user.id);
+      });
   };
 
   const calendarEvents = useMemo(() => {

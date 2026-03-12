@@ -25,6 +25,18 @@ This app uses Supabase for sign in/sign up.
 
 5. Restart Expo after changing env vars.
 
+## Supabase Task Sync Setup
+
+To sync tasks/categories across devices, run SQL schema + RLS policies:
+
+1. Open Supabase `SQL Editor`.
+2. Run the script in `supabase/schema.sql`.
+
+This creates:
+- `task_categories`
+- `tasks`
+- Row Level Security policies scoped to `auth.uid()`
+
 ## Get started
 
 1. Install dependencies
