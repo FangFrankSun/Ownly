@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatTaskDateTime } from '@/components/app/task-date-utils';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
@@ -15,16 +15,39 @@ function getWeekView() {
 
     return {
       key: date.toISOString(),
+      dayKey: getDayKey(date),
       day: date.toLocaleDateString(undefined, { weekday: 'short' }),
       date: date.getDate(),
+      label: date.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      }),
       active: index === 2,
     };
   });
 }
 
+function getDayKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
 export default function CalendarScreen() {
   const { calendarEvents } = useTasks();
   const days = useMemo(() => getWeekView(), []);
+  const [selectedDayKey, setSelectedDayKey] = useState(
+    () => days.find((d) => d.active)?.dayKey ?? days[0]?.dayKey ?? ''
+  );
+
+  const selectedDay = useMemo(
+    () => days.find((day) => day.dayKey === selectedDayKey),
+    [days, selectedDayKey]
+  );
+
+  const selectedDayEvents = useMemo(
+    () => calendarEvents.filter((event) => getDayKey(new Date(event.scheduledAt)) === selectedDayKey),
+    [calendarEvents, selectedDayKey]
+  );
 
   return (
     <ScreenShell title="Calendar" subtitle="Your task events are auto-synced here.">
@@ -32,22 +55,28 @@ export default function CalendarScreen() {
         <SectionLabel text="This Week" />
         <View style={styles.dayRow}>
           {days.map((d) => (
-            <View key={d.key} style={[styles.dayPill, d.active && styles.dayPillActive]}>
-              <Text style={[styles.dayName, d.active && styles.dayNameActive]}>{d.day}</Text>
-              <Text style={[styles.dayDate, d.active && styles.dayDateActive]}>{d.date}</Text>
-            </View>
+            <Pressable
+              key={d.key}
+              onPress={() => setSelectedDayKey(d.dayKey)}
+              style={[styles.dayPill, d.dayKey === selectedDayKey && styles.dayPillActive]}>
+              <Text style={[styles.dayName, d.dayKey === selectedDayKey && styles.dayNameActive]}>{d.day}</Text>
+              <Text style={[styles.dayDate, d.dayKey === selectedDayKey && styles.dayDateActive]}>{d.date}</Text>
+            </Pressable>
           ))}
         </View>
       </AppCard>
 
       <AppCard delay={160}>
-        <SectionLabel text="Upcoming" />
+        <SectionLabel text="Events" />
         <CardTitle accent="#3A86FF" icon="event" title="Synced From Tasks" />
+        <Text style={styles.selectedDayText}>{selectedDay?.label ?? 'Selected day'}</Text>
 
-        {calendarEvents.length === 0 ? (
-          <Text style={styles.emptyText}>No timed tasks yet. Add tasks in the Tasks tab.</Text>
+        {selectedDayEvents.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No events on this day. Add timed tasks in the Tasks tab.
+          </Text>
         ) : (
-          calendarEvents.map((event) => (
+          selectedDayEvents.map((event) => (
             <View key={event.id} style={styles.eventRow}>
               <View style={[styles.dot, { backgroundColor: event.categoryColor }]} />
               <View style={styles.eventText}>
@@ -104,6 +133,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6A738D',
     lineHeight: 21,
+  },
+  selectedDayText: {
+    fontSize: 13,
+    color: '#6A738D',
+    marginBottom: 10,
   },
   eventRow: {
     flexDirection: 'row',
