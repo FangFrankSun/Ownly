@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/components/app/auth-context';
 import { TasksProvider } from '@/components/app/tasks-context';
+import { ThemeProvider as AppThemeProvider, useAppTheme } from '@/components/app/theme-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
@@ -19,19 +20,21 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AuthProvider>
-        <TasksProvider>
-          <AuthGate />
-          <Stack>
-            <Stack.Screen name="login" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="task-editor"
-              options={{ presentation: 'modal', headerShown: false }}
-            />
-            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-          </Stack>
-          <StatusBar style="auto" />
-        </TasksProvider>
+        <AppThemeProvider>
+          <TasksProvider>
+            <AuthGate />
+            <Stack>
+              <Stack.Screen name="login" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="task-editor"
+                options={{ presentation: 'modal', headerShown: false }}
+              />
+              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+            </Stack>
+            <StatusBar style="auto" />
+          </TasksProvider>
+        </AppThemeProvider>
       </AuthProvider>
     </ThemeProvider>
   );
@@ -41,6 +44,7 @@ function AuthGate() {
   const router = useRouter();
   const pathname = usePathname();
   const { isAuthenticated, isHydrated } = useAuth();
+  const { theme } = useAppTheme();
 
   useEffect(() => {
     if (!isHydrated) {
@@ -79,7 +83,7 @@ function AuthGate() {
           backgroundColor: '#F2F5FC',
           zIndex: 20,
         }}>
-        <ActivityIndicator color="#3A86FF" size="large" />
+        <ActivityIndicator color={theme.primary} size="large" />
       </View>
     );
   }

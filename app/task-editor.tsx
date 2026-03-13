@@ -17,9 +17,90 @@ import {
   isValidIsoDate,
   toIsoWithDateAndTime,
 } from '@/components/app/task-date-utils';
+import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 
-const CATEGORY_COLORS = ['#4C6FFF', '#17A673', '#FF8A4C', '#9B5DE5', '#E63946', '#2A9D8F'];
+function hslToHex(hue: number, saturation: number, lightness: number) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const h = hue / 60;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (h >= 0 && h < 1) {
+    r = c;
+    g = x;
+  } else if (h >= 1 && h < 2) {
+    r = x;
+    g = c;
+  } else if (h >= 2 && h < 3) {
+    g = c;
+    b = x;
+  } else if (h >= 3 && h < 4) {
+    g = x;
+    b = c;
+  } else if (h >= 4 && h < 5) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+
+  const m = l - c / 2;
+  const toHex = (value: number) => Math.round((value + m) * 255).toString(16).padStart(2, '0').toUpperCase();
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+const PALETTE_COLUMN_PROFILE: { hue: number; saturation: number; kind: 'color' | 'neutral' }[] = [
+  { hue: 352, saturation: 90, kind: 'color' },
+  { hue: 334, saturation: 84, kind: 'color' },
+  { hue: 301, saturation: 60, kind: 'color' },
+  { hue: 272, saturation: 48, kind: 'color' },
+  { hue: 234, saturation: 42, kind: 'color' },
+  { hue: 206, saturation: 54, kind: 'color' },
+  { hue: 197, saturation: 60, kind: 'color' },
+  { hue: 186, saturation: 64, kind: 'color' },
+  { hue: 174, saturation: 66, kind: 'color' },
+  { hue: 122, saturation: 42, kind: 'color' },
+  { hue: 94, saturation: 52, kind: 'color' },
+  { hue: 67, saturation: 64, kind: 'color' },
+  { hue: 53, saturation: 83, kind: 'color' },
+  { hue: 41, saturation: 88, kind: 'color' },
+  { hue: 30, saturation: 90, kind: 'color' },
+  { hue: 14, saturation: 86, kind: 'color' },
+  { hue: 18, saturation: 28, kind: 'neutral' },
+  { hue: 28, saturation: 10, kind: 'neutral' },
+  { hue: 0, saturation: 0, kind: 'neutral' },
+  { hue: 202, saturation: 24, kind: 'neutral' },
+];
+const PALETTE_SHADE_LIGHTNESS = [88, 80, 72, 64, 57, 50, 43, 36, 29, 22];
+const PALETTE_COLUMNS = PALETTE_COLUMN_PROFILE.length;
+const PALETTE_ROWS = PALETTE_SHADE_LIGHTNESS.length;
+
+function buildSpectrumColors() {
+  const colors: string[] = [];
+  for (let row = 0; row < PALETTE_ROWS; row += 1) {
+    const lightness = PALETTE_SHADE_LIGHTNESS[row] ?? 50;
+
+    for (let col = 0; col < PALETTE_COLUMNS; col += 1) {
+      const column = PALETTE_COLUMN_PROFILE[col];
+      const rowBoost = column.kind === 'color' ? -7 + row * 2 : -2 + row;
+      const saturation = Math.max(0, Math.min(96, column.saturation + rowBoost));
+      colors.push(hslToHex(column.hue, saturation, lightness));
+    }
+  }
+
+  return colors;
+}
+
+const SPECTRUM_COLORS = buildSpectrumColors();
+const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
 
 function buildDateOptions(days = 21) {
   const start = new Date();
@@ -53,10 +134,46 @@ function buildTimeOptions() {
   return options;
 }
 
+function formatManualTime(hour: number, minute: number) {
+  return `${hour}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseManualTime(value: string) {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
+    return null;
+  }
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  return { hour, minute };
+}
+
+function normalizeHexColor(value: string) {
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const candidate = normalized.startsWith('#') ? normalized : `#${normalized}`;
+  if (!/^#[0-9A-F]{6}$/.test(candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
 export default function TaskEditorScreen() {
   const router = useRouter();
+  const { theme } = useAppTheme();
   const { taskId } = useLocalSearchParams<{ taskId?: string }>();
-  const { tasks, categories, addTask, updateTask, addCategory, deleteCategory } = useTasks();
+  const { tasks, categories, addTask, updateTask, addCategory, updateCategoryColor, deleteCategory } = useTasks();
 
   const isEditing = typeof taskId === 'string' && taskId.length > 0;
   const editingTask = useMemo(
@@ -71,17 +188,27 @@ export default function TaskEditorScreen() {
   const [notes, setNotes] = useState(editingTask?.notes ?? '');
   const [categoryId, setCategoryId] = useState(editingTask?.categoryId ?? defaultCategoryId);
   const [scheduledAt, setScheduledAt] = useState(initialSchedule);
+  const [durationMinutes, setDurationMinutes] = useState(editingTask?.durationMinutes ?? 60);
   const [repeatable, setRepeatable] = useState(editingTask?.repeatable ?? false);
   const [error, setError] = useState('');
 
   const [categoryEditMode, setCategoryEditMode] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryColor, setNewCategoryColor] = useState(CATEGORY_COLORS[0]);
+  const [colorPaletteOpen, setColorPaletteOpen] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [paletteColor, setPaletteColor] = useState(theme.primary);
+  const [paletteHexInput, setPaletteHexInput] = useState(theme.primary);
+  const [paletteError, setPaletteError] = useState('');
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerDate, setPickerDate] = useState(new Date(initialSchedule));
   const [pickerHour, setPickerHour] = useState(new Date(initialSchedule).getHours());
   const [pickerMinute, setPickerMinute] = useState(new Date(initialSchedule).getMinutes() >= 30 ? 30 : 0);
+  const [manualTime, setManualTime] = useState(() =>
+    formatManualTime(new Date(initialSchedule).getHours(), new Date(initialSchedule).getMinutes())
+  );
+  const [durationInput, setDurationInput] = useState(String(editingTask?.durationMinutes ?? 60));
+  const [pickerError, setPickerError] = useState('');
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
   const timeOptions = useMemo(() => buildTimeOptions(), []);
@@ -91,11 +218,32 @@ export default function TaskEditorScreen() {
     setPickerDate(current);
     setPickerHour(current.getHours());
     setPickerMinute(current.getMinutes() >= 30 ? 30 : 0);
+    setManualTime(formatManualTime(current.getHours(), current.getMinutes()));
+    setDurationInput(String(durationMinutes));
+    setPickerError('');
     setPickerOpen(true);
   };
 
   const applyPicker = () => {
-    setScheduledAt(toIsoWithDateAndTime(pickerDate, pickerHour, pickerMinute));
+    const parsed = parseManualTime(manualTime);
+    if (!parsed) {
+      setPickerError('Use 24-hour format like 1:42 or 13:42.');
+      return;
+    }
+
+    const parsedDuration = Number(durationInput.trim());
+    if (!Number.isFinite(parsedDuration) || parsedDuration < 5 || parsedDuration > 24 * 60) {
+      setPickerError('Duration must be between 5 and 1440 minutes.');
+      return;
+    }
+
+    const normalizedDuration = Math.round(parsedDuration);
+    setPickerHour(parsed.hour);
+    setPickerMinute(parsed.minute);
+    setScheduledAt(toIsoWithDateAndTime(pickerDate, parsed.hour, parsed.minute));
+    setDurationMinutes(normalizedDuration);
+    setDurationInput(String(normalizedDuration));
+    setPickerError('');
     setPickerOpen(false);
   };
 
@@ -105,7 +253,7 @@ export default function TaskEditorScreen() {
       return;
     }
 
-    const newId = addCategory(newCategoryName, newCategoryColor);
+    const newId = addCategory(newCategoryName, theme.primary);
     setCategoryId(newId);
     setNewCategoryName('');
     setError('');
@@ -148,6 +296,7 @@ export default function TaskEditorScreen() {
       notes,
       categoryId,
       scheduledAt,
+      durationMinutes,
       repeatable,
     };
 
@@ -160,19 +309,58 @@ export default function TaskEditorScreen() {
     router.back();
   };
 
+  const openCategoryColorPicker = (categoryIdToEdit: string, currentColor: string) => {
+    setEditingCategoryId(categoryIdToEdit);
+    setPaletteColor(currentColor);
+    setPaletteHexInput(currentColor);
+    setPaletteError('');
+    setColorPaletteOpen(true);
+  };
+
+  const closeCategoryColorPicker = () => {
+    setColorPaletteOpen(false);
+    setEditingCategoryId(null);
+    setPaletteError('');
+  };
+
+  const handleSaveCategoryColor = () => {
+    if (!editingCategoryId) {
+      closeCategoryColorPicker();
+      return;
+    }
+
+    const normalized = normalizeHexColor(paletteHexInput);
+    if (!normalized) {
+      setPaletteError('Use a valid hex color like #4C6FFF.');
+      return;
+    }
+
+    updateCategoryColor(editingCategoryId, normalized);
+    closeCategoryColorPicker();
+  };
+
   return (
-    <View style={styles.page}>
+    <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.topRow}>
           <Pressable onPress={() => router.back()} style={styles.iconButton}>
             <MaterialIcons color="#4A5576" name="close" size={22} />
           </Pressable>
-          <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Add Task'}</Text>
-          <View style={styles.iconButton} />
+          <View style={styles.headerCopy}>
+            <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Create Task'}</Text>
+            <Text style={styles.headerSubtitle}>Keep details clear so your calendar stays focused.</Text>
+          </View>
+          <View style={styles.headerSpacer} />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Task Details</Text>
+          <View style={styles.sectionHeadingRow}>
+            <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
+              <MaterialIcons color={theme.primary} name="edit-note" size={16} />
+            </View>
+            <Text style={styles.sectionTitle}>Task Details</Text>
+          </View>
+          <Text style={styles.inputLabel}>Title</Text>
           <TextInput
             onChangeText={setTitle}
             placeholder="Title"
@@ -180,6 +368,7 @@ export default function TaskEditorScreen() {
             style={styles.input}
             value={title}
           />
+          <Text style={styles.inputLabel}>Notes</Text>
           <TextInput
             multiline
             onChangeText={setNotes}
@@ -188,30 +377,43 @@ export default function TaskEditorScreen() {
             style={[styles.input, styles.notesInput]}
             value={notes}
           />
+          <Text style={styles.inputLabel}>Date & Duration</Text>
           <Pressable onPress={openPicker} style={styles.pickerButton}>
-            <MaterialIcons color="#2F52D0" name="event" size={18} />
-            <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
+            <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
+              <MaterialIcons color={theme.primary} name="event" size={17} />
+            </View>
+            <View style={styles.pickerTextBlock}>
+              <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
+              <Text style={styles.pickerSubtext}>{durationMinutes} min</Text>
+            </View>
+            <MaterialIcons color="#6A7798" name="chevron-right" size={20} />
           </Pressable>
           <View style={styles.repeatRow}>
-            <Text style={styles.repeatLabel}>Repeat task</Text>
+            <View style={styles.repeatTextBlock}>
+              <Text style={styles.repeatLabel}>Repeat task</Text>
+              <Text style={styles.repeatSubtext}>Automatically keep this on your schedule.</Text>
+            </View>
             <Switch
               ios_backgroundColor="#CCD3E3"
               onValueChange={setRepeatable}
-              thumbColor={repeatable ? '#2345B8' : '#F3F5FB'}
-              trackColor={{ false: '#CCD3E3', true: '#7FA0FF' }}
+              thumbColor={repeatable ? theme.primary : '#F3F5FB'}
+              trackColor={{ false: '#CCD3E3', true: `${theme.primary}66` }}
               value={repeatable}
             />
           </View>
         </View>
 
         <View style={styles.card}>
-          <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionHeadingRow}>
+            <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
+              <MaterialIcons color={theme.primary} name="category" size={16} />
+            </View>
             <Text style={styles.sectionTitle}>Categories</Text>
+            <View style={styles.sectionHeadingSpacer} />
             <Pressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
               <Text style={styles.smallButtonText}>{categoryEditMode ? 'Done' : 'Edit'}</Text>
             </Pressable>
           </View>
-
           <View style={styles.categoryList}>
             {categories.map((category) => {
               const selected = category.id === categoryId;
@@ -229,6 +431,12 @@ export default function TaskEditorScreen() {
                       {category.name}
                     </Text>
                   </Pressable>
+                  <Pressable
+                    onPress={() => openCategoryColorPicker(category.id, category.color)}
+                    style={styles.categoryColorButton}>
+                    <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
+                    <MaterialIcons color="#516184" name="palette" size={15} />
+                  </Pressable>
                   {categoryEditMode ? (
                     <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
                       <MaterialIcons color="#C7364A" name="delete-outline" size={18} />
@@ -239,6 +447,7 @@ export default function TaskEditorScreen() {
             })}
           </View>
 
+          <Text style={styles.inputLabel}>New Category</Text>
           <TextInput
             onChangeText={setNewCategoryName}
             placeholder="New category name"
@@ -246,25 +455,14 @@ export default function TaskEditorScreen() {
             style={styles.input}
             value={newCategoryName}
           />
-          <View style={styles.colorRow}>
-            {CATEGORY_COLORS.map((color) => (
-              <Pressable
-                key={color}
-                onPress={() => setNewCategoryColor(color)}
-                style={[
-                  styles.colorDot,
-                  { backgroundColor: color },
-                  newCategoryColor === color && styles.colorDotActive,
-                ]}
-              />
-            ))}
-          </View>
           <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
             <Text style={styles.secondaryButtonText}>Add Category</Text>
           </Pressable>
         </View>
 
-        <Pressable onPress={handleSave} style={styles.primaryButton}>
+        <Pressable
+          onPress={handleSave}
+          style={[styles.primaryButton, { backgroundColor: theme.primary, borderColor: `${theme.primary}99` }]}>
           <Text style={styles.primaryButtonText}>{editingTask ? 'Save Changes' : 'Create Task'}</Text>
         </Pressable>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -281,7 +479,11 @@ export default function TaskEditorScreen() {
                   <Pressable
                     key={dateOption.toISOString()}
                     onPress={() => setPickerDate(dateOption)}
-                    style={[styles.datePill, selected && styles.datePillActive]}>
+                    style={[
+                      styles.datePill,
+                      selected && styles.datePillActive,
+                      selected && { backgroundColor: theme.primary },
+                    ]}>
                     <Text style={[styles.datePillWeekday, selected && styles.datePillTextActive]}>
                       {dateOption.toLocaleDateString(undefined, { weekday: 'short' })}
                     </Text>
@@ -303,9 +505,20 @@ export default function TaskEditorScreen() {
                     onPress={() => {
                       setPickerHour(option.hour);
                       setPickerMinute(option.minute);
+                      setManualTime(formatManualTime(option.hour, option.minute));
+                      setPickerError('');
                     }}
-                    style={[styles.timeOption, selected && styles.timeOptionActive]}>
-                    <Text style={[styles.timeOptionText, selected && styles.timeOptionTextActive]}>
+                    style={[
+                      styles.timeOption,
+                      selected && styles.timeOptionActive,
+                      selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}1F` },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.timeOptionText,
+                        selected && styles.timeOptionTextActive,
+                        selected && { color: theme.primary },
+                      ]}>
                       {option.label}
                     </Text>
                   </Pressable>
@@ -313,11 +526,123 @@ export default function TaskEditorScreen() {
               })}
             </ScrollView>
 
+            <View style={styles.manualTimeRow}>
+              <Text style={styles.manualTimeLabel}>Exact time</Text>
+              <TextInput
+                onChangeText={setManualTime}
+                value={manualTime}
+                placeholder="1:42"
+                placeholderTextColor="#8E96AC"
+                style={styles.manualTimeInput}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+
+            <View style={styles.manualTimeRow}>
+              <Text style={styles.manualTimeLabel}>Duration (min)</Text>
+              <TextInput
+                onChangeText={setDurationInput}
+                value={durationInput}
+                placeholder="60"
+                placeholderTextColor="#8E96AC"
+                style={styles.durationInput}
+                keyboardType="number-pad"
+              />
+            </View>
+
+            <View style={styles.durationPresetRow}>
+              {DURATION_PRESETS.map((value) => {
+                const selected = durationInput.trim() === String(value);
+                return (
+                  <Pressable
+                    key={value}
+                    onPress={() => setDurationInput(String(value))}
+                    style={[
+                      styles.durationPill,
+                      selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}18` },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.durationPillText,
+                        selected && { color: theme.primary },
+                      ]}>
+                      {value}m
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {pickerError ? <Text style={styles.pickerErrorText}>{pickerError}</Text> : null}
+
             <View style={styles.modalActions}>
               <Pressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable onPress={applyPicker} style={styles.primaryButtonCompact}>
+              <Pressable onPress={applyPicker} style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
+                <Text style={styles.primaryButtonText}>Apply</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal animationType="fade" transparent visible={colorPaletteOpen}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.paletteModalCard}>
+            <View style={styles.paletteModalHeader}>
+              <Text style={styles.modalTitle}>Choose Category Color</Text>
+              <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
+                <MaterialIcons color="#5B6581" name="close" size={20} />
+              </Pressable>
+            </View>
+
+            <View style={styles.paletteGrid}>
+              {SPECTRUM_COLORS.map((color, index) => {
+                const selected = color === paletteColor;
+
+                return (
+                  <Pressable
+                    key={`${color}-${index}`}
+                    onPress={() => {
+                      setPaletteColor(color);
+                      setPaletteHexInput(color);
+                      setPaletteError('');
+                    }}
+                    style={[
+                      styles.paletteSwatch,
+                      { backgroundColor: color },
+                      selected && styles.paletteSwatchSelected,
+                      selected && { borderColor: theme.secondary },
+                    ]}
+                  />
+                );
+              })}
+            </View>
+            {paletteError ? <Text style={styles.pickerErrorText}>{paletteError}</Text> : null}
+
+            <View style={styles.paletteFooter}>
+              <View style={styles.paletteValuePill}>
+                <View
+                  style={[
+                    styles.customColorPreview,
+                    { backgroundColor: normalizeHexColor(paletteHexInput) ?? paletteColor },
+                  ]}
+                />
+                <TextInput
+                  onChangeText={(value) => {
+                    setPaletteHexInput(value);
+                    setPaletteError('');
+                  }}
+                  value={paletteHexInput}
+                  placeholder="#4C6FFF"
+                  placeholderTextColor="#8E96AC"
+                  style={styles.paletteFooterInput}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <Pressable
+                onPress={handleSaveCategoryColor}
+                style={[styles.paletteApplyButton, { backgroundColor: theme.primary }]}>
                 <Text style={styles.primaryButtonText}>Apply</Text>
               </Pressable>
             </View>
@@ -334,48 +659,90 @@ const styles = StyleSheet.create({
     backgroundColor: '#F2F5FC',
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 62,
-    paddingBottom: 36,
-    gap: 14,
+    paddingHorizontal: 18,
+    paddingTop: 56,
+    paddingBottom: 40,
+    gap: 16,
   },
   topRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  headerCopy: {
+    flex: 1,
+    gap: 2,
   },
   title: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '800',
-    color: '#1A2133',
+    color: '#17213A',
+    lineHeight: 34,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#667294',
+    lineHeight: 19,
   },
   iconButton: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8EDF9',
+    backgroundColor: '#EEF3FF',
+    borderWidth: 1,
+    borderColor: '#DEE7FA',
+  },
+  headerSpacer: {
+    width: 36,
+    height: 36,
   },
   card: {
-    borderRadius: 24,
+    borderRadius: 22,
     padding: 16,
-    gap: 10,
+    gap: 12,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.7)',
+    borderColor: '#E3EAF8',
+    shadowColor: '#1A284F',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
+  sectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sectionIconBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionHeadingSpacer: {
+    flex: 1,
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#243154',
+  },
+  inputLabel: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#5A627B',
+    color: '#667294',
+    letterSpacing: 0.25,
     textTransform: 'uppercase',
-    letterSpacing: 0.2,
   },
   input: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#D5DDEE',
+    borderColor: '#D8E1F1',
     paddingHorizontal: 12,
     paddingVertical: 11,
     backgroundColor: '#FAFCFF',
@@ -383,59 +750,82 @@ const styles = StyleSheet.create({
     color: '#1A2133',
   },
   notesInput: {
-    minHeight: 78,
+    minHeight: 92,
     textAlignVertical: 'top',
   },
   pickerButton: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#CAD5F0',
-    backgroundColor: '#F3F7FF',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    borderColor: '#D4DEF2',
+    backgroundColor: '#F6F9FF',
+    paddingHorizontal: 11,
+    paddingVertical: 10,
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
     alignItems: 'center',
+  },
+  pickerIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerTextBlock: {
+    flex: 1,
+    gap: 1,
   },
   pickerText: {
     fontSize: 14,
+    fontWeight: '700',
+    color: '#243154',
+  },
+  pickerSubtext: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#2D3C66',
+    color: '#6A7696',
   },
   repeatRow: {
-    borderRadius: 12,
-    backgroundColor: '#F7F9FE',
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E0E8F7',
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 11,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  repeatTextBlock: {
+    flex: 1,
+    gap: 1,
+    paddingRight: 12,
   },
   repeatLabel: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#55617E',
+    fontWeight: '700',
+    color: '#44506E',
   },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  repeatSubtext: {
+    fontSize: 12,
+    color: '#7380A0',
+    fontWeight: '600',
   },
   smallButton: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CCD5EC',
+    borderColor: '#CDD8EE',
     backgroundColor: '#F5F8FF',
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
   smallButtonText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#3D4A72',
+    color: '#3A4972',
   },
   categoryList: {
-    gap: 8,
+    gap: 9,
   },
   categoryRow: {
     flexDirection: 'row',
@@ -447,7 +837,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.3,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     backgroundColor: '#FFFFFF',
   },
   categoryChipText: {
@@ -459,6 +849,24 @@ const styles = StyleSheet.create({
   categoryChipTextSelected: {
     color: '#FFFFFF',
   },
+  categoryColorButton: {
+    width: 44,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D5DDEF',
+    backgroundColor: '#F7FAFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+  },
+  categoryColorDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.12)',
+  },
   deleteCategoryButton: {
     width: 34,
     height: 34,
@@ -469,26 +877,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  colorRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  colorDot: {
-    width: 24,
-    height: 24,
+  customColorPreview: {
+    width: 32,
+    height: 32,
     borderRadius: 999,
-  },
-  colorDotActive: {
-    borderWidth: 2,
-    borderColor: '#1A2133',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
   },
   primaryButton: {
-    borderRadius: 14,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#2F52D0',
     backgroundColor: '#2F52D0',
-    paddingVertical: 13,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#2F52D0',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   primaryButtonCompact: {
     borderRadius: 12,
@@ -499,14 +907,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   secondaryButton: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#CCD5EC',
+    borderColor: '#D0DAEE',
     backgroundColor: '#F5F8FF',
     paddingVertical: 10,
     paddingHorizontal: 14,
@@ -521,7 +929,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 13,
     color: '#CF394A',
-    fontWeight: '600',
+    fontWeight: '700',
     textAlign: 'center',
   },
   modalBackdrop: {
@@ -603,9 +1011,144 @@ const styles = StyleSheet.create({
   timeOptionTextActive: {
     color: '#1F3FAA',
   },
+  manualTimeRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  manualTimeLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#44506F',
+  },
+  manualTimeInput: {
+    width: 120,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CFD7EA',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#F8FAFF',
+    fontSize: 13,
+    color: '#1A2133',
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  durationInput: {
+    width: 120,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CFD7EA',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#F8FAFF',
+    fontSize: 13,
+    color: '#1A2133',
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  durationPresetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  durationPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CFD7EA',
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  durationPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4E5A7A',
+  },
+  pickerErrorText: {
+    fontSize: 12,
+    color: '#CF394A',
+    fontWeight: '600',
+  },
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
+  },
+  paletteModalCard: {
+    width: '94%',
+    maxWidth: 980,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E4EBF8',
+  },
+  paletteModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paletteCloseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F2F5FC',
+  },
+  paletteGrid: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 0,
+    backgroundColor: '#FFFFFF',
+    marginTop: 2,
+  },
+  paletteSwatch: {
+    width: `${100 / PALETTE_COLUMNS}%`,
+    aspectRatio: 1,
+    borderRadius: 0,
+    borderWidth: 0,
+  },
+  paletteSwatchSelected: {
+    borderWidth: 2,
+    borderColor: '#1F2A44',
+  },
+  paletteFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  paletteValuePill: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D5DDEE',
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  paletteFooterInput: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#384260',
+  },
+  paletteApplyButton: {
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

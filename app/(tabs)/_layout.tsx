@@ -3,24 +3,29 @@ import React from 'react';
 import { Platform } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
+import { useAppTheme } from '@/components/app/theme-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const { theme } = useAppTheme();
 
   return (
     <Tabs
       initialRouteName="tasks"
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: theme.primary ?? Colors[colorScheme ?? 'light'].tint,
         tabBarInactiveTintColor: colorScheme === 'dark' ? '#8F96A3' : '#7B8091',
         tabBarStyle: {
-          height: Platform.select({ ios: 88, default: 68 }),
+          height: Platform.select({ ios: 86, default: 70 }),
           paddingTop: 8,
-          backgroundColor: colorScheme === 'dark' ? '#161C26' : '#F7F9FD',
-          borderTopWidth: 0,
+          paddingBottom: Platform.select({ ios: 20, default: 10 }),
+          backgroundColor: theme.tabBackground,
+          borderTopWidth: 1,
+          borderTopColor: theme.tabBorder,
+          position: 'absolute',
           elevation: 0,
         },
         tabBarLabelStyle: {

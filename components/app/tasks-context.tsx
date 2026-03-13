@@ -15,6 +15,7 @@ export type TaskItem = {
   notes: string;
   categoryId: string;
   scheduledAt: string;
+  durationMinutes: number;
   repeatable: boolean;
   done: boolean;
   createdAt: number;
@@ -25,6 +26,7 @@ type TaskDraftInput = {
   notes: string;
   categoryId: string;
   scheduledAt: string;
+  durationMinutes: number;
   repeatable: boolean;
 };
 
@@ -33,6 +35,7 @@ type CalendarEvent = {
   title: string;
   notes: string;
   scheduledAt: string;
+  durationMinutes: number;
   repeatable: boolean;
   done: boolean;
   categoryName: string;
@@ -44,6 +47,7 @@ type TasksContextValue = {
   tasks: TaskItem[];
   calendarEvents: CalendarEvent[];
   addCategory: (name: string, color: string) => string;
+  updateCategoryColor: (categoryId: string, color: string) => void;
   deleteCategory: (categoryId: string) => void;
   addTask: (draft: TaskDraftInput) => void;
   updateTask: (taskId: string, draft: TaskDraftInput) => void;
@@ -56,6 +60,7 @@ type TaskRow = {
   notes: string | null;
   category_id: string;
   scheduled_at: string;
+  duration_minutes?: number | null;
   repeatable: boolean;
   done: boolean;
   created_at: number;
@@ -68,6 +73,7 @@ const seedCategoryTemplate = [
 ] as const;
 
 const TasksContext = createContext<TasksContextValue | null>(null);
+const DURATION_TAG_REGEX = /\s*\[\[DURATION:(\d{1,4})\]\]\s*$/;
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
@@ -81,13 +87,50 @@ function normalizedTimestamp(value: string) {
   return date.toISOString();
 }
 
+function normalizedDurationMinutes(value: number | null | undefined) {
+  if (!Number.isFinite(value)) {
+    return 60;
+  }
+  return Math.max(5, Math.min(24 * 60, Math.round(value as number)));
+}
+
+function isMissingDurationColumn(error: { message?: string } | null | undefined) {
+  return Boolean(error?.message?.includes('duration_minutes'));
+}
+
+function appendDurationTag(notes: string, durationMinutes: number) {
+  const clean = notes.replace(DURATION_TAG_REGEX, '').trimEnd();
+  return `${clean} [[DURATION:${normalizedDurationMinutes(durationMinutes)}]]`.trim();
+}
+
+function parseNotesAndDuration(notes: string | null | undefined, fallbackDuration: number | null | undefined) {
+  const raw = notes ?? '';
+  const match = raw.match(DURATION_TAG_REGEX);
+  if (!match) {
+    return {
+      notes: raw,
+      durationMinutes: normalizedDurationMinutes(fallbackDuration),
+    };
+  }
+
+  const taggedDuration = Number(match[1]);
+  return {
+    notes: raw.replace(DURATION_TAG_REGEX, '').trimEnd(),
+    durationMinutes: normalizedDurationMinutes(
+      Number.isFinite(taggedDuration) ? taggedDuration : fallbackDuration
+    ),
+  };
+}
+
 function toTaskItem(row: TaskRow): TaskItem {
+  const parsed = parseNotesAndDuration(row.notes, row.duration_minutes);
   return {
     id: row.id,
     title: row.title,
-    notes: row.notes ?? '',
+    notes: parsed.notes,
     categoryId: row.category_id,
     scheduledAt: row.scheduled_at,
+    durationMinutes: parsed.durationMinutes,
     repeatable: row.repeatable,
     done: row.done,
     createdAt: row.created_at ?? Date.now(),
@@ -144,15 +187,24 @@ async function fetchCloudTaskData(userId: string) {
 
   const tasksResponse = await supabase
     .from('tasks')
-    .select('id,title,notes,category_id,scheduled_at,repeatable,done,created_at')
+    .select('id,title,notes,category_id,scheduled_at,duration_minutes,repeatable,done,created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
-  if (tasksResponse.error) {
-    throw tasksResponse.error;
+  let finalTasksResponse = tasksResponse;
+  if (tasksResponse.error && isMissingDurationColumn(tasksResponse.error)) {
+    finalTasksResponse = await supabase
+      .from('tasks')
+      .select('id,title,notes,category_id,scheduled_at,repeatable,done,created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
   }
 
-  const tasks = (tasksResponse.data as TaskRow[] | null)?.map(toTaskItem) ?? [];
+  if (finalTasksResponse.error) {
+    throw finalTasksResponse.error;
+  }
+
+  const tasks = (finalTasksResponse.data as TaskRow[] | null)?.map(toTaskItem) ?? [];
   return {
     categories,
     tasks,
@@ -333,6 +385,32 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       });
   };
 
+  const updateCategoryColor = (categoryId: string, color: string) => {
+    if (!categories.some((category) => category.id === categoryId)) {
+      return;
+    }
+
+    setCategories((prev) =>
+      prev.map((category) => (category.id === categoryId ? { ...category, color } : category))
+    );
+
+    if (!user || !supabase) {
+      return;
+    }
+
+    void supabase
+      .from('task_categories')
+      .update({ color })
+      .eq('user_id', user.id)
+      .eq('id', categoryId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Failed to update category color in Supabase', error);
+        }
+        void refreshFromCloud(user.id);
+      });
+  };
+
   const addTask = (draft: TaskDraftInput) => {
     if (!user) {
       return;
@@ -344,6 +422,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       notes: draft.notes.trim(),
       categoryId: draft.categoryId,
       scheduledAt: normalizedTimestamp(draft.scheduledAt),
+      durationMinutes: normalizedDurationMinutes(draft.durationMinutes),
       repeatable: draft.repeatable,
       done: false,
       createdAt: Date.now(),
@@ -355,25 +434,42 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    void supabase
-      .from('tasks')
-      .insert({
+    void (async () => {
+      const payload = {
         id: newTask.id,
         user_id: user.id,
         title: newTask.title,
         notes: newTask.notes,
         category_id: newTask.categoryId,
         scheduled_at: newTask.scheduledAt,
+        duration_minutes: newTask.durationMinutes,
         repeatable: newTask.repeatable,
         done: newTask.done,
         created_at: newTask.createdAt,
-      })
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to save task to Supabase', error);
-        }
-        void refreshFromCloud(user.id);
-      });
+      };
+
+      let { error } = await supabase.from('tasks').insert(payload);
+      if (error && isMissingDurationColumn(error)) {
+        ({ error } = await supabase
+          .from('tasks')
+          .insert({
+            id: newTask.id,
+            user_id: user.id,
+            title: newTask.title,
+            notes: appendDurationTag(newTask.notes, newTask.durationMinutes),
+            category_id: newTask.categoryId,
+            scheduled_at: newTask.scheduledAt,
+            repeatable: newTask.repeatable,
+            done: newTask.done,
+            created_at: newTask.createdAt,
+          }));
+      }
+
+      if (error) {
+        console.error('Failed to save task to Supabase', error);
+      }
+      void refreshFromCloud(user.id);
+    })();
   };
 
   const updateTask = (taskId: string, draft: TaskDraftInput) => {
@@ -386,6 +482,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       notes: draft.notes.trim(),
       categoryId: draft.categoryId,
       scheduledAt: normalizedTimestamp(draft.scheduledAt),
+      durationMinutes: normalizedDurationMinutes(draft.durationMinutes),
       repeatable: draft.repeatable,
     };
 
@@ -397,23 +494,39 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    void supabase
-      .from('tasks')
-      .update({
-        title: nextTask.title,
-        notes: nextTask.notes,
-        category_id: nextTask.categoryId,
-        scheduled_at: nextTask.scheduledAt,
-        repeatable: nextTask.repeatable,
-      })
-      .eq('user_id', user.id)
-      .eq('id', taskId)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to update task in Supabase', error);
-        }
-        void refreshFromCloud(user.id);
-      });
+    void (async () => {
+      let { error } = await supabase
+        .from('tasks')
+        .update({
+          title: nextTask.title,
+          notes: nextTask.notes,
+          category_id: nextTask.categoryId,
+          scheduled_at: nextTask.scheduledAt,
+          duration_minutes: nextTask.durationMinutes,
+          repeatable: nextTask.repeatable,
+        })
+        .eq('user_id', user.id)
+        .eq('id', taskId);
+
+      if (error && isMissingDurationColumn(error)) {
+        ({ error } = await supabase
+          .from('tasks')
+          .update({
+            title: nextTask.title,
+            notes: appendDurationTag(nextTask.notes, nextTask.durationMinutes),
+            category_id: nextTask.categoryId,
+            scheduled_at: nextTask.scheduledAt,
+            repeatable: nextTask.repeatable,
+          })
+          .eq('user_id', user.id)
+          .eq('id', taskId));
+      }
+
+      if (error) {
+        console.error('Failed to update task in Supabase', error);
+      }
+      void refreshFromCloud(user.id);
+    })();
   };
 
   const toggleTaskDone = (taskId: string) => {
@@ -463,6 +576,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           title: task.title,
           notes: task.notes,
           scheduledAt: task.scheduledAt,
+          durationMinutes: task.durationMinutes,
           repeatable: task.repeatable,
           done: task.done,
           categoryName: category?.name ?? 'General',
@@ -476,6 +590,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     tasks,
     calendarEvents,
     addCategory,
+    updateCategoryColor,
     deleteCategory,
     addTask,
     updateTask,

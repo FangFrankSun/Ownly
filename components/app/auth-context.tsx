@@ -7,6 +7,7 @@ type AuthUser = {
   id: string;
   name: string;
   email: string;
+  themeId: string | null;
 };
 
 type AuthSuccess = {
@@ -51,6 +52,7 @@ function mapSessionUser(session: Session | null): AuthUser | null {
     id: session.user.id,
     name: derivedName || session.user.email?.split('@')[0] || 'User',
     email: session.user.email ?? '',
+    themeId: typeof metadata.theme_id === 'string' ? metadata.theme_id : null,
   };
 }
 

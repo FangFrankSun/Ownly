@@ -18,10 +18,14 @@ create table if not exists public.tasks (
   notes text not null default '',
   category_id text not null references public.task_categories(id) on delete restrict,
   scheduled_at timestamptz not null,
+  duration_minutes integer not null default 60,
   repeatable boolean not null default false,
   done boolean not null default false,
   created_at bigint not null
 );
+
+alter table public.tasks
+  add column if not exists duration_minutes integer not null default 60;
 
 create index if not exists tasks_user_created_at_idx
   on public.tasks(user_id, created_at desc);

@@ -1,13 +1,15 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import { useAppTheme } from './theme-context';
 
 type ScreenShellProps = {
   title: string;
   subtitle: string;
   children: ReactNode;
   floatingAction?: ReactNode;
+  scrollRef?: RefObject<ScrollView | null>;
 };
 
 type CardProps = {
@@ -15,12 +17,14 @@ type CardProps = {
   delay?: number;
 };
 
-export function ScreenShell({ title, subtitle, children, floatingAction }: ScreenShellProps) {
+export function ScreenShell({ title, subtitle, children, floatingAction, scrollRef }: ScreenShellProps) {
+  const { theme } = useAppTheme();
+
   return (
-    <View style={styles.page}>
-      <View style={[styles.orb, styles.orbA]} />
-      <View style={[styles.orb, styles.orbB]} />
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
+      <View style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
+      <View style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Animated.View entering={FadeInUp.duration(500)}>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
@@ -132,14 +136,12 @@ const styles = StyleSheet.create({
     height: 260,
     top: -100,
     right: -70,
-    backgroundColor: '#CCD9FF',
   },
   orbB: {
     width: 220,
     height: 220,
     left: -80,
     bottom: 140,
-    backgroundColor: '#DDF7EA',
   },
   floatingActionWrap: {
     position: 'absolute',

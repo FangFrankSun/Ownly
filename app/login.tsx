@@ -3,12 +3,14 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/components/app/auth-context';
+import { useAppTheme } from '@/components/app/theme-context';
 
 type AuthMode = 'signin' | 'signup';
 
 export default function LoginScreen() {
   const router = useRouter();
   const { signIn, signUp } = useAuth();
+  const { theme } = useAppTheme();
 
   const [mode, setMode] = useState<AuthMode>('signin');
   const [name, setName] = useState('');
@@ -49,9 +51,9 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={styles.page}>
-      <View style={[styles.orb, styles.orbA]} />
-      <View style={[styles.orb, styles.orbB]} />
+    <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
+      <View style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
+      <View style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
 
       <View style={styles.card}>
         <Text style={styles.title}>{mode === 'signin' ? 'Sign In' : 'Create Account'}</Text>
@@ -64,12 +66,20 @@ export default function LoginScreen() {
         <View style={styles.modeRow}>
           <Pressable
             onPress={() => switchMode('signin')}
-            style={[styles.modeButton, mode === 'signin' && styles.modeButtonActive]}>
+            style={[
+              styles.modeButton,
+              mode === 'signin' && styles.modeButtonActive,
+              mode === 'signin' && { backgroundColor: theme.secondary },
+            ]}>
             <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
           </Pressable>
           <Pressable
             onPress={() => switchMode('signup')}
-            style={[styles.modeButton, mode === 'signup' && styles.modeButtonActive]}>
+            style={[
+              styles.modeButton,
+              mode === 'signup' && styles.modeButtonActive,
+              mode === 'signup' && { backgroundColor: theme.secondary },
+            ]}>
             <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Sign Up</Text>
           </Pressable>
         </View>
@@ -104,7 +114,10 @@ export default function LoginScreen() {
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {message ? <Text style={styles.messageText}>{message}</Text> : null}
 
-        <Pressable onPress={submit} style={styles.primaryButton} disabled={isSubmitting}>
+        <Pressable
+          onPress={submit}
+          style={[styles.primaryButton, { backgroundColor: theme.primary }]}
+          disabled={isSubmitting}>
           <Text style={styles.primaryButtonText}>
             {isSubmitting ? 'Please wait...' : mode === 'signin' ? 'Log In' : 'Create Account'}
           </Text>
@@ -117,7 +130,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: '#F2F5FC',
     justifyContent: 'center',
     padding: 20,
   },
@@ -130,14 +142,12 @@ const styles = StyleSheet.create({
     height: 260,
     top: -120,
     right: -90,
-    backgroundColor: '#CCD9FF',
   },
   orbB: {
     width: 240,
     height: 240,
     bottom: -110,
     left: -80,
-    backgroundColor: '#DDF7EA',
   },
   card: {
     borderRadius: 24,
@@ -172,7 +182,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeButtonActive: {
-    backgroundColor: '#273352',
+    backgroundColor: '#2F52D0',
   },
   modeText: {
     fontSize: 13,
