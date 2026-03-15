@@ -3,7 +3,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -44,7 +44,8 @@ export default function LoginScreen() {
   const webFirebaseAuthSupport = getWebFirebaseAuthSupport();
   const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
   const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-  const [nativeGoogleRequest, , promptNativeGoogleAsync] = Google.useIdTokenAuthRequest(
+  const nativeGooglePendingRef = useRef(false);
+  const [nativeGoogleRequest, nativeGoogleResponse, promptNativeGoogleAsync] = Google.useIdTokenAuthRequest(
     {
       iosClientId: googleIosClientId || undefined,
       selectAccount: true,
@@ -54,6 +55,67 @@ export default function LoginScreen() {
       path: 'oauthredirect',
     }
   );
+
+  useEffect(() => {
+    if (!nativeGooglePendingRef.current || !nativeGoogleResponse) {
+      return;
+    }
+
+    if (nativeGoogleResponse.type === 'cancel' || nativeGoogleResponse.type === 'dismiss') {
+      nativeGooglePendingRef.current = false;
+      setMessage('');
+      setError('Google sign-in was canceled.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (nativeGoogleResponse.type === 'error') {
+      nativeGooglePendingRef.current = false;
+      setMessage('');
+      setError(nativeGoogleResponse.error?.message || 'Google sign-in failed. Please try again.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (nativeGoogleResponse.type !== 'success') {
+      return;
+    }
+
+    const idToken = nativeGoogleResponse.params.id_token ?? nativeGoogleResponse.authentication?.idToken;
+    const accessToken =
+      nativeGoogleResponse.params.access_token ?? nativeGoogleResponse.authentication?.accessToken;
+
+    if (!idToken) {
+      if (nativeGoogleResponse.params.code) {
+        setMessage('Finishing Google sign-in...');
+        return;
+      }
+
+      nativeGooglePendingRef.current = false;
+      setMessage('');
+      setError('Google sign-in completed without an ID token. Check the iOS Google OAuth client configuration.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    nativeGooglePendingRef.current = false;
+    setMessage('Finishing Google sign-in...');
+
+    void (async () => {
+      const result = await signInWithGoogleIdToken(idToken, accessToken);
+      if (!result.ok) {
+        setMessage('');
+        setError(result.error);
+        setIsSubmitting(false);
+        return;
+      }
+
+      setMessage('');
+      setError('');
+      setIsSubmitting(false);
+      router.replace('/(tabs)/tasks');
+    })();
+  }, [nativeGoogleResponse, router, signInWithGoogleIdToken]);
 
   const submitEmailAuth = async () => {
     setIsSubmitting(true);
@@ -128,32 +190,26 @@ export default function LoginScreen() {
       return;
     }
 
+    nativeGooglePendingRef.current = true;
+
     const response = await promptNativeGoogleAsync();
     if (response.type === 'cancel' || response.type === 'dismiss') {
+      nativeGooglePendingRef.current = false;
       setError('Google sign-in was canceled.');
       setIsSubmitting(false);
       return;
     }
 
-    if (response.type !== 'success') {
+    if (response.type === 'error') {
+      nativeGooglePendingRef.current = false;
       const errorMessage =
-        response.type === 'error' ? response.error?.message || 'Google sign-in failed. Please try again.' : 'Google sign-in failed. Please try again.';
+        response.error?.message || 'Google sign-in failed. Please try again.';
       setError(errorMessage);
       setIsSubmitting(false);
       return;
     }
 
-    const idToken = response.params.id_token;
-    const accessToken = response.params.access_token;
-    const result = await signInWithGoogleIdToken(idToken, accessToken);
-    if (!result.ok) {
-      setError(result.error);
-      setIsSubmitting(false);
-      return;
-    }
-
-    setIsSubmitting(false);
-    router.replace('/(tabs)/tasks');
+    setMessage('Finishing Google sign-in...');
   };
 
   const showPasskeyNotice = () => {

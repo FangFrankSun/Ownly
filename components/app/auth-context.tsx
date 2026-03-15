@@ -39,7 +39,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isHydrated: boolean;
   signIn: (email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
-  signInWithGoogleIdToken: (idToken: string, accessToken?: string) => Promise<AuthSuccess | AuthFailure>;
+  signInWithGoogleIdToken: (idToken?: string, accessToken?: string) => Promise<AuthSuccess | AuthFailure>;
   signInWithProvider: (provider: OAuthProviderId) => Promise<AuthSuccess | AuthFailure>;
   signUp: (name: string, email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
   signOut: () => Promise<void>;
@@ -226,7 +226,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return configError;
     }
 
-    const normalizedIdToken = idToken.trim();
+    const normalizedIdToken = idToken?.trim() ?? '';
+    const normalizedAccessToken = accessToken?.trim() || undefined;
     if (!normalizedIdToken) {
       return {
         ok: false,
@@ -235,7 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const credential = GoogleAuthProvider.credential(normalizedIdToken, accessToken);
+      const credential = GoogleAuthProvider.credential(normalizedIdToken, normalizedAccessToken);
       const result = await signInWithCredential(auth!, credential);
 
       await syncSignedInUserProfile(result.user);
