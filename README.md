@@ -1,85 +1,76 @@
-# Welcome to your Expo app 👋
+# Ownly (Expo + Firebase)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This app now uses Firebase for auth + cloud data sync.
 
-## Supabase Auth Setup
+## 1) Environment Variables
 
-This app uses Supabase for sign in/sign up.
-
-1. Create a Supabase project.
-2. In Supabase dashboard, copy:
-   - Project URL
-   - Anon public key
-3. Create a local env file from `.env.example`:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-4. Fill `.env`:
-
-   ```bash
-   EXPO_PUBLIC_SUPABASE_URL=...
-   EXPO_PUBLIC_SUPABASE_ANON_KEY=...
-   ```
-
-5. Restart Expo after changing env vars.
-
-## Supabase Task Sync Setup
-
-To sync tasks/categories across devices, run SQL schema + RLS policies:
-
-1. Open Supabase `SQL Editor`.
-2. Run the script in `supabase/schema.sql`.
-
-This creates:
-- `task_categories`
-- `tasks`
-- Row Level Security policies scoped to `auth.uid()`
-
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Set these in `.env`:
 
 ```bash
-npm run reset-project
+EXPO_PUBLIC_FIREBASE_API_KEY=...
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+EXPO_PUBLIC_FIREBASE_APP_ID=...
+EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID=...
+EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=...
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+For TestFlight/EAS builds, set the same values in `eas.json` under `build.production.env`.
 
-## Learn more
+## 2) Firebase Auth Setup
 
-To learn more about developing your project with Expo, look at the following resources:
+In Firebase Console:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+1. Go to `Authentication`.
+2. Enable `Email/Password`.
+3. Enable social providers you want (`Google`, `Apple`, `Microsoft`).
+4. Add allowed auth domains (for web), e.g.:
+   - `localhost`
+   - your future production domain
 
-## Join the community
+Current app behavior:
+- Web supports Firebase popup auth for Google/Apple/Microsoft.
+- iOS development builds and the production iOS app support Google sign-in.
+- Expo Go on iOS should use email/password; native Google OAuth needs a development build or production app.
+- Android currently supports email/password auth.
 
-Join our community of developers creating universal apps.
+## 3) Firestore Database Setup
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+In Firebase Console:
+
+1. Go to `Firestore Database`.
+2. Create database in **Native mode**.
+3. Open `Rules` and apply rules from:
+   - `firebase/firestore.rules`
+
+The app data model is:
+
+- `users/{uid}`
+- `users/{uid}/task_categories/{categoryId}`
+- `users/{uid}/tasks/{taskId}`
+
+## 4) Optional: Deploy Rules via CLI
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase use --add
+firebase deploy --only firestore:rules,firestore:indexes
+```
+
+Rules and indexes sources:
+
+- `firebase/firestore.rules`
+- `firebase/firestore.indexes.json`
+- `firebase.json`
+
+## 5) Run App
+
+```bash
+npm install
+npx expo start -c --port 8081
+```
+
+For native iOS Google sign-in during development, use a development build instead of Expo Go.

@@ -1,15 +1,35 @@
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/app/auth-context';
+import { getWebFirebaseAuthSupport } from '@/components/app/firebase-client';
 import { useAppTheme } from '@/components/app/theme-context';
 
 type AuthMode = 'signin' | 'signup';
+type OAuthProvider = 'google' | 'apple' | 'azure';
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { signIn, signUp } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { signIn, signInWithGoogleIdToken, signInWithProvider, signUp } = useAuth();
   const { theme } = useAppTheme();
 
   const [mode, setMode] = useState<AuthMode>('signin');
@@ -19,15 +39,28 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isWeb = Platform.OS === 'web';
+  const isIos = Platform.OS === 'ios';
+  const webFirebaseAuthSupport = getWebFirebaseAuthSupport();
+  const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+  const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+  const [nativeGoogleRequest, , promptNativeGoogleAsync] = Google.useIdTokenAuthRequest(
+    {
+      iosClientId: googleIosClientId || undefined,
+      selectAccount: true,
+    },
+    {
+      scheme: 'ownly',
+      path: 'oauthredirect',
+    }
+  );
 
-  const submit = async () => {
+  const submitEmailAuth = async () => {
     setIsSubmitting(true);
     setError('');
     setMessage('');
 
-    const result =
-      mode === 'signin' ? await signIn(email, password) : await signUp(name, email, password);
-
+    const result = mode === 'signin' ? await signIn(email, password) : await signUp(name, email, password);
     if (!result.ok) {
       setError(result.error);
       setIsSubmitting(false);
@@ -44,85 +77,298 @@ export default function LoginScreen() {
     router.replace('/(tabs)/tasks');
   };
 
+  const submitProvider = async (provider: OAuthProvider) => {
+    setIsSubmitting(true);
+    setError('');
+    setMessage('');
+
+    const result = await signInWithProvider(provider);
+    if (!result.ok) {
+      setError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (result.message) {
+      setMessage(result.message);
+      setIsSubmitting(false);
+      return;
+    }
+
+    setIsSubmitting(false);
+    router.replace('/(tabs)/tasks');
+  };
+
+  const submitNativeGoogle = async () => {
+    setIsSubmitting(true);
+    setError('');
+    setMessage('');
+
+    if (!isIos) {
+      setError('Native Google sign-in is currently configured for iOS.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (isExpoGo) {
+      setError('Google sign-in on iOS needs a development build or production app. Expo Go cannot complete this native Google redirect.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!googleIosClientId) {
+      setError('Google sign-in is not configured for iOS yet.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!nativeGoogleRequest) {
+      setMessage('Preparing Google sign-in...');
+      setIsSubmitting(false);
+      return;
+    }
+
+    const response = await promptNativeGoogleAsync();
+    if (response.type === 'cancel' || response.type === 'dismiss') {
+      setError('Google sign-in was canceled.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (response.type !== 'success') {
+      const errorMessage =
+        response.type === 'error' ? response.error?.message || 'Google sign-in failed. Please try again.' : 'Google sign-in failed. Please try again.';
+      setError(errorMessage);
+      setIsSubmitting(false);
+      return;
+    }
+
+    const idToken = response.params.id_token;
+    const accessToken = response.params.access_token;
+    const result = await signInWithGoogleIdToken(idToken, accessToken);
+    if (!result.ok) {
+      setError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
+
+    setIsSubmitting(false);
+    router.replace('/(tabs)/tasks');
+  };
+
+  const showPasskeyNotice = () => {
+    setError('');
+    setMessage('Passkey login will be available after provider setup.');
+  };
+
+  const showSSONotice = () => {
+    setError('');
+    setMessage('SSO login will be available after enterprise provider setup.');
+  };
+
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
     setError('');
     setMessage('');
   };
 
+  const shouldShowEmailForm = true;
+
   return (
-    <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
-      <View style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
-      <View style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
+    <View style={[styles.page, { backgroundColor: '#F7F7F7' }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}
+        style={styles.keyboardAvoiding}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: Math.max(insets.top + 24, 36),
+              paddingBottom: Math.max(insets.bottom + 24, 28),
+            },
+          ]}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          showsVerticalScrollIndicator={false}>
+          <View style={[styles.panel, Platform.OS === 'web' ? styles.panelWeb : styles.panelPhone]}>
+            <View style={styles.brandMark}>
+              <Text style={styles.brandMarkText}>Me</Text>
+            </View>
 
-      <View style={styles.card}>
-        <Text style={styles.title}>{mode === 'signin' ? 'Sign In' : 'Create Account'}</Text>
-        <Text style={styles.subtitle}>
-          {mode === 'signin'
-            ? 'Log in to access your personal app workspace.'
-            : 'Create an account to store your own tasks and events.'}
-        </Text>
+            <Text style={styles.headline}>Your AI workspace.</Text>
+            <Text style={styles.subheadline}>Log in to your account</Text>
 
-        <View style={styles.modeRow}>
-          <Pressable
-            onPress={() => switchMode('signin')}
-            style={[
-              styles.modeButton,
-              mode === 'signin' && styles.modeButtonActive,
-              mode === 'signin' && { backgroundColor: theme.secondary },
-            ]}>
-            <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => switchMode('signup')}
-            style={[
-              styles.modeButton,
-              mode === 'signup' && styles.modeButtonActive,
-              mode === 'signup' && { backgroundColor: theme.secondary },
-            ]}>
-            <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Sign Up</Text>
-          </Pressable>
-        </View>
+            {isWeb ? (
+              <>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>Log in with</Text>
+                  <View style={styles.dividerLine} />
+                </View>
 
-        {mode === 'signup' ? (
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="Name"
-            placeholderTextColor="#8A93A9"
-            style={styles.input}
-          />
-        ) : null}
-        <TextInput
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          placeholder="Email"
-          placeholderTextColor="#8A93A9"
-          style={styles.input}
-        />
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          placeholder="Password"
-          placeholderTextColor="#8A93A9"
-          style={styles.input}
-        />
+                <View style={[styles.providerGroup, styles.providerGroupWeb]}>
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={() => submitProvider('google')}
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    <MaterialCommunityIcons color="#4285F4" name="google" size={24} />
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Google</Text>
+                  </Pressable>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {message ? <Text style={styles.messageText}>{message}</Text> : null}
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={() => submitProvider('apple')}
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    <MaterialCommunityIcons color="#151515" name="apple" size={24} />
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Apple</Text>
+                  </Pressable>
 
-        <Pressable
-          onPress={submit}
-          style={[styles.primaryButton, { backgroundColor: theme.primary }]}
-          disabled={isSubmitting}>
-          <Text style={styles.primaryButtonText}>
-            {isSubmitting ? 'Please wait...' : mode === 'signin' ? 'Log In' : 'Create Account'}
-          </Text>
-        </Pressable>
-      </View>
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={() => submitProvider('azure')}
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    <MaterialCommunityIcons color="#00A4EF" name="microsoft" size={24} />
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Microsoft</Text>
+                  </Pressable>
+
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={showPasskeyNotice}
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    <MaterialCommunityIcons color="#232323" name="key-chain-variant" size={22} />
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Passkey</Text>
+                  </Pressable>
+
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={showSSONotice}
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    <MaterialCommunityIcons color="#232323" name="office-building-outline" size={22} />
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>SSO</Text>
+                  </Pressable>
+                </View>
+
+                {!webFirebaseAuthSupport.isSupported ? (
+                  <Text style={styles.providerHintText}>{webFirebaseAuthSupport.message}</Text>
+                ) : null}
+              </>
+            ) : isIos ? (
+              <>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>Continue with</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <View style={[styles.providerGroup, styles.providerGroupPhone]}>
+                  <Pressable
+                    disabled={isSubmitting}
+                    onPress={submitNativeGoogle}
+                    style={[styles.providerButton, styles.providerButtonPhone]}>
+                    <MaterialCommunityIcons color="#4285F4" name="google" size={26} />
+                    <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Google</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={styles.mobileSupportText}>
+                  Google sign-in is available on iOS development builds and the production app. Email/password also works here.
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.mobileSupportText}>Mobile currently supports email/password sign-in.</Text>
+            )}
+
+            {shouldShowEmailForm ? (
+              <View style={styles.emailBlock}>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or continue with email</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <View style={styles.modeRow}>
+                  <Pressable
+                    onPress={() => switchMode('signin')}
+                    style={[
+                      styles.modeButton,
+                      mode === 'signin' && styles.modeButtonActive,
+                      mode === 'signin' && { backgroundColor: theme.secondary },
+                    ]}>
+                    <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => switchMode('signup')}
+                    style={[
+                      styles.modeButton,
+                      mode === 'signup' && styles.modeButtonActive,
+                      mode === 'signup' && { backgroundColor: theme.secondary },
+                    ]}>
+                    <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Sign Up</Text>
+                  </Pressable>
+                </View>
+
+                {mode === 'signup' ? (
+                  <TextInput
+                    autoCapitalize="words"
+                    onChangeText={setName}
+                    placeholder="Name"
+                    placeholderTextColor="#8A93A9"
+                    returnKeyType="next"
+                    style={styles.input}
+                    value={name}
+                  />
+                ) : null}
+                <TextInput
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  onChangeText={setEmail}
+                  placeholder="Enter your email address..."
+                  placeholderTextColor="#8A93A9"
+                  returnKeyType="next"
+                  style={styles.input}
+                  value={email}
+                />
+                <TextInput
+                  onChangeText={setPassword}
+                  onSubmitEditing={submitEmailAuth}
+                  placeholder="Password"
+                  placeholderTextColor="#8A93A9"
+                  returnKeyType="done"
+                  secureTextEntry
+                  style={styles.input}
+                  value={password}
+                />
+
+                <Pressable
+                  disabled={isSubmitting}
+                  onPress={submitEmailAuth}
+                  style={[styles.primaryButton, { backgroundColor: theme.primary }]}>
+                  <Text style={styles.primaryButtonText}>
+                    {isSubmitting ? 'Please wait...' : mode === 'signin' ? 'Continue' : 'Create Account'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {message ? <Text style={styles.messageText}>{message}</Text> : null}
+
+            <Text style={[styles.termsCopy, Platform.OS === 'web' && styles.termsCopyWeb]}>
+              By continuing, you acknowledge that you understand and agree to the Terms & Conditions and Privacy
+              Policy.
+            </Text>
+
+            {Platform.OS !== 'web' ? (
+              <View style={styles.mobileFooterLinks}>
+                <Text style={styles.footerLink}>Privacy & terms</Text>
+                <Text style={styles.footerLink}>Need help?</Text>
+              </View>
+            ) : null}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -130,54 +376,135 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
+  },
+  keyboardAvoiding: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    paddingHorizontal: 20,
   },
-  orb: {
-    position: 'absolute',
-    borderRadius: 999,
-  },
-  orbA: {
-    width: 260,
-    height: 260,
-    top: -120,
-    right: -90,
-  },
-  orbB: {
-    width: 240,
-    height: 240,
-    bottom: -110,
-    left: -80,
-  },
-  card: {
-    borderRadius: 24,
-    padding: 20,
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.75)',
+  panel: {
+    width: '100%',
+    alignSelf: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
     gap: 12,
   },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: '#182031',
-    letterSpacing: -0.5,
+  panelWeb: {
+    maxWidth: 360,
+    paddingHorizontal: 4,
+    paddingVertical: 8,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#5B6274',
-    lineHeight: 20,
-    marginBottom: 4,
+  panelPhone: {
+    maxWidth: 780,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  brandMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#212121',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandMarkText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111111',
+  },
+  headline: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+    color: '#212121',
+    marginTop: 6,
+  },
+  subheadline: {
+    fontSize: 18,
+    lineHeight: 24,
+    color: '#979797',
+    fontWeight: '600',
+    marginTop: -2,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E5E5',
+  },
+  dividerText: {
+    fontSize: 13,
+    color: '#9B9B9B',
+    fontWeight: '500',
+  },
+  providerGroup: {
+    gap: 10,
+  },
+  providerGroupWeb: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  providerGroupPhone: {
+    flexDirection: 'column',
+  },
+  providerButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DFDFDF',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  providerButtonWeb: {
+    width: 102,
+    minHeight: 72,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  providerButtonPhone: {
+    flexDirection: 'row',
+    height: 62,
+    paddingHorizontal: 18,
+    gap: 14,
+    justifyContent: 'flex-start',
+  },
+  providerText: {
+    color: '#2A2A2A',
+    fontWeight: '500',
+  },
+  providerTextWeb: {
+    fontSize: 12,
+  },
+  providerTextPhone: {
+    fontSize: 15,
+  },
+  emailBlock: {
+    gap: 10,
   },
   modeRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 4,
+    marginTop: 2,
   },
   modeButton: {
     flex: 1,
-    borderRadius: 12,
-    backgroundColor: '#EDF2FF',
+    borderRadius: 10,
+    backgroundColor: '#F1F3F7',
     paddingVertical: 8,
     alignItems: 'center',
   },
@@ -193,35 +520,66 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   input: {
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#D6DEEE',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     fontSize: 15,
     color: '#1A2133',
     backgroundColor: '#FFFFFF',
   },
-  errorText: {
-    fontSize: 13,
-    color: '#D63652',
-    marginTop: -2,
-  },
-  messageText: {
-    fontSize: 13,
-    color: '#1C7B4F',
-    marginTop: -2,
-  },
   primaryButton: {
-    marginTop: 4,
-    borderRadius: 12,
+    marginTop: 2,
+    borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: '#2F52D0',
+    justifyContent: 'center',
   },
   primaryButtonText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#D63652',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  messageText: {
+    fontSize: 13,
+    color: '#1C7B4F',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  providerHintText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6B7280',
+  },
+  mobileSupportText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6B7280',
+  },
+  termsCopy: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#7B7B7B',
+    marginTop: 4,
+  },
+  termsCopyWeb: {
+    textAlign: 'center',
+  },
+  mobileFooterLinks: {
+    flexDirection: 'row',
+    gap: 26,
+    marginTop: 6,
+  },
+  footerLink: {
+    fontSize: 13,
+    color: '#777777',
+    textDecorationLine: 'underline',
   },
 });

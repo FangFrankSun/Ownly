@@ -1,15 +1,19 @@
 {
   "expo": {
-    "name": "Me.",
-    "slug": "Me.",
-    "version": "1.0.0",
+    "name": "Ownly",
+    "slug": "ownly",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "me",
+    "scheme": "ownly",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.shphfranksun.ownly",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -43,6 +47,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8a7019c5-8f20-47c0-b5c0-77054e16f727"
+      }
+    },
+    "owner": "shphfranksun"
   }
 }

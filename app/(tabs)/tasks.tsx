@@ -3,24 +3,23 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  LayoutAnimation,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  UIManager,
   View,
 } from 'react-native';
-import Reanimated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
+import Reanimated, { Easing, FadeIn, FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 
 import { formatTaskDateTime } from '@/components/app/task-date-utils';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 
-const COMPLETED_DROPDOWN_OPEN_MS = 320;
-const COMPLETED_DROPDOWN_CLOSE_MS = 260;
+const COMPLETED_DROPDOWN_OPEN_MS = 260;
+const COMPLETED_DROPDOWN_CLOSE_MS = 220;
+const COMPLETED_OPEN_STAGGER_MS = 60;
+const COMPLETED_CLOSE_STAGGER_MS = 95;
 
 export default function TasksScreen() {
   const router = useRouter();
@@ -28,21 +27,21 @@ export default function TasksScreen() {
   const { tasks, categories, toggleTaskDone } = useTasks();
   const scrollRef = useRef<ScrollView | null>(null);
   const completedSectionY = useRef(0);
+  const completedStepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAnimatingCompletedToggle = useRef(false);
   const strikeAnim = useRef(new Animated.Value(0)).current;
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [pendingCompletedScroll, setPendingCompletedScroll] = useState(false);
   const [showCompleted, setShowCompleted] = useState(true);
-
-  useEffect(() => {
-    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-  }, []);
+  const [isHidingCompleted, setIsHidingCompleted] = useState(false);
+  const [visibleCompletedCount, setVisibleCompletedCount] = useState(0);
+  const [showCompletedHiddenHint, setShowCompletedHiddenHint] = useState(false);
 
   const doneCount = tasks.filter((task) => task.done).length;
   const progressPercent = tasks.length === 0 ? 0 : Math.round((doneCount / tasks.length) * 100);
   const activeTasks = useMemo(() => tasks.filter((task) => !task.done), [tasks]);
   const completedTasks = useMemo(() => tasks.filter((task) => task.done), [tasks]);
+  const visibleCompletedTasks = completedTasks.slice(0, visibleCompletedCount);
   const categoryNameById = useMemo(
     () => new Map(categories.map((category) => [category.id, category.name])),
     [categories]
@@ -51,6 +50,16 @@ export default function TasksScreen() {
     inputRange: [0, 1],
     outputRange: ['0%', '100%'],
   });
+
+  useEffect(() => {
+    return () => {
+      if (completedStepTimer.current) {
+        clearTimeout(completedStepTimer.current);
+        completedStepTimer.current = null;
+      }
+      isAnimatingCompletedToggle.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!pendingCompletedScroll || completedTasks.length === 0) {
@@ -69,11 +78,16 @@ export default function TasksScreen() {
       clearTimeout(timeout);
     };
   }, [completedTasks.length, pendingCompletedScroll]);
-
-  const toggleWithLayoutAnimation = (taskId: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    toggleTaskDone(taskId);
-  };
+  useEffect(() => {
+    if (isAnimatingCompletedToggle.current) {
+      return;
+    }
+    if (showCompleted) {
+      setVisibleCompletedCount(completedTasks.length);
+    } else {
+      setVisibleCompletedCount((prev) => Math.min(prev, completedTasks.length));
+    }
+  }, [completedTasks.length, showCompleted]);
 
   const handleToggleTask = (taskId: string, taskDone: boolean) => {
     if (completingTaskId) {
@@ -81,7 +95,7 @@ export default function TasksScreen() {
     }
 
     if (taskDone) {
-      toggleWithLayoutAnimation(taskId);
+      toggleTaskDone(taskId);
       return;
     }
 
@@ -97,14 +111,71 @@ export default function TasksScreen() {
         return;
       }
 
-      toggleWithLayoutAnimation(taskId);
+      toggleTaskDone(taskId);
       setCompletingTaskId(null);
       setShowCompleted(true);
+      setShowCompletedHiddenHint(false);
       setPendingCompletedScroll(true);
     });
   };
+  const clearCompletedSequenceTimer = () => {
+    if (completedStepTimer.current) {
+      clearTimeout(completedStepTimer.current);
+      completedStepTimer.current = null;
+    }
+    isAnimatingCompletedToggle.current = false;
+  };
   const toggleCompletedVisibility = () => {
-    setShowCompleted((prev) => !prev);
+    clearCompletedSequenceTimer();
+
+    if (showCompleted) {
+      setIsHidingCompleted(true);
+      setShowCompletedHiddenHint(false);
+      const total = visibleCompletedCount;
+      if (total <= 0) {
+        setShowCompleted(false);
+        setIsHidingCompleted(false);
+        setShowCompletedHiddenHint(true);
+        return;
+      }
+      isAnimatingCompletedToggle.current = true;
+      const hideNext = () => {
+        setVisibleCompletedCount((previous) => {
+          const next = Math.max(0, previous - 1);
+          if (next === 0) {
+            isAnimatingCompletedToggle.current = false;
+            setShowCompleted(false);
+            setIsHidingCompleted(false);
+            setShowCompletedHiddenHint(true);
+          } else {
+            completedStepTimer.current = setTimeout(hideNext, COMPLETED_CLOSE_STAGGER_MS);
+          }
+          return next;
+        });
+      };
+      hideNext();
+      return;
+    }
+
+    setShowCompleted(true);
+    setIsHidingCompleted(false);
+    setShowCompletedHiddenHint(false);
+    const total = completedTasks.length;
+    if (total <= 0) {
+      setVisibleCompletedCount(0);
+      return;
+    }
+    setVisibleCompletedCount(0);
+    isAnimatingCompletedToggle.current = true;
+    const showNext = (nextCount: number) => {
+      setVisibleCompletedCount(nextCount);
+      if (nextCount >= total) {
+        isAnimatingCompletedToggle.current = false;
+        return;
+      }
+      completedStepTimer.current = setTimeout(() => showNext(nextCount + 1), COMPLETED_OPEN_STAGGER_MS);
+    };
+    showNext(1);
   };
 
   const renderTaskItem = (task: (typeof tasks)[number], inCompletedSection: boolean) => {
@@ -198,6 +269,7 @@ export default function TasksScreen() {
           <View style={styles.completedHeaderRow}>
             <SectionLabel text="Completed" />
             <Pressable
+              disabled={isAnimatingCompletedToggle.current}
               onPress={toggleCompletedVisibility}
               style={[styles.completedToggleButton, { borderColor: `${theme.primary}33` }]}>
               <Text style={[styles.completedToggleText, { color: theme.primary }]}>
@@ -210,19 +282,25 @@ export default function TasksScreen() {
               />
             </Pressable>
           </View>
-          {showCompleted ? (
-            <Reanimated.View
-              entering={FadeInDown.duration(COMPLETED_DROPDOWN_OPEN_MS)}
-              exiting={FadeOutUp.duration(COMPLETED_DROPDOWN_CLOSE_MS)}
-              style={styles.completedBody}>
-              {completedTasks.length === 0 ? (
-                <Text style={styles.emptyText}>Completed tasks will appear here.</Text>
-              ) : null}
-              {completedTasks.map((task) => renderTaskItem(task, true))}
-            </Reanimated.View>
-          ) : (
-            <Text style={styles.completedCollapsedHint}>Completed tasks are hidden.</Text>
-          )}
+          <View style={styles.completedBody}>
+            {(showCompleted || isHidingCompleted) && visibleCompletedTasks.length > 0 ? (
+              visibleCompletedTasks.map((task) => (
+                <Reanimated.View
+                  key={`completed-${task.id}`}
+                  layout={LinearTransition.duration(220)}
+                  entering={FadeInDown.duration(COMPLETED_DROPDOWN_OPEN_MS).easing(Easing.out(Easing.cubic))}
+                  exiting={FadeOutDown.duration(COMPLETED_DROPDOWN_CLOSE_MS).easing(Easing.inOut(Easing.cubic))}>
+                  {renderTaskItem(task, true)}
+                </Reanimated.View>
+              ))
+            ) : showCompleted ? (
+              <Text style={styles.emptyText}>Completed tasks will appear here.</Text>
+            ) : showCompletedHiddenHint ? (
+              <Reanimated.View entering={FadeIn.duration(170).easing(Easing.out(Easing.quad))}>
+                <Text style={styles.completedCollapsedHint}>Completed tasks are hidden.</Text>
+              </Reanimated.View>
+            ) : null}
+          </View>
         </AppCard>
       </View>
     </ScreenShell>

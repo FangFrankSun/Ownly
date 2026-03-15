@@ -1,8 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,16 +12,17 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import Animated, {
+  Easing,
   FadeIn,
   FadeInDown,
   FadeOut,
-  FadeOutUp,
+  FadeOutDown,
   FadeInRight,
   FadeOutRight,
+  LinearTransition,
 } from 'react-native-reanimated';
 
-import { formatTaskDateTime } from '@/components/app/task-date-utils';
-import { AppCard, CardTitle, ScreenShell } from '@/components/app/screen-shell';
+import { AppCard, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 
@@ -83,9 +85,16 @@ const MINUTES_IN_DAY = 24 * 60;
 const TIMELINE_HOUR_HEIGHT = 46;
 const MIN_EVENT_MINUTES = 30;
 const DEFAULT_EVENT_MINUTES = 60;
-const COMPLETED_DROPDOWN_OPEN_MS = 320;
-const COMPLETED_DROPDOWN_CLOSE_MS = 260;
+const COMPLETED_DROPDOWN_OPEN_MS = 260;
+const COMPLETED_DROPDOWN_CLOSE_MS = 220;
+const COMPLETED_OPEN_STAGGER_MS = 60;
+const COMPLETED_CLOSE_STAGGER_MS = 95;
 const NOW_INDICATOR_COLOR = '#E53935';
+const IS_IOS = Platform.OS === 'ios';
+const MODE_MENU_POPOVER_LEFT = IS_IOS ? 126 : 136;
+const MODE_MENU_PILL_GAP = IS_IOS ? 6 : 8;
+const TIMELINE_RAIL_WIDTH = IS_IOS ? 42 : 50;
+const TIMELINE_WRAP_PADDING = IS_IOS ? 6 : 8;
 
 function addDays(baseDate: Date, days: number) {
   const date = new Date(baseDate);
@@ -217,6 +226,32 @@ function formatDurationLabel(minutes: number) {
   return `${minutes}m`;
 }
 
+function getEventEndDate(startDate: Date, durationMinutes: number) {
+  const safeDuration =
+    Number.isFinite(durationMinutes) && durationMinutes > 0
+      ? durationMinutes
+      : DEFAULT_EVENT_MINUTES;
+  return new Date(startDate.getTime() + safeDuration * 60 * 1000);
+}
+
+function formatEventTimeRange(scheduledAt: string, durationMinutes: number) {
+  const startDate = new Date(scheduledAt);
+  if (Number.isNaN(startDate.getTime())) {
+    return 'Unknown time';
+  }
+  const endDate = getEventEndDate(startDate, durationMinutes);
+  const timeOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
+  return `${startDate.toLocaleTimeString(undefined, timeOptions)} - ${endDate.toLocaleTimeString(undefined, timeOptions)}`;
+}
+
+function formatEventDateTimeRange(scheduledAt: string, durationMinutes: number) {
+  const startDate = new Date(scheduledAt);
+  if (Number.isNaN(startDate.getTime())) {
+    return 'Unknown schedule';
+  }
+  return `${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${formatEventTimeRange(scheduledAt, durationMinutes)}`;
+}
+
 function buildTimelineDays(mode: ViewMode, focusDate: Date): TimelineDay[] {
   const dayCount = mode === 'day' ? 1 : mode === 'threeDay' ? 3 : mode === 'week' ? 7 : 0;
   if (dayCount === 0) {
@@ -303,6 +338,11 @@ export default function CalendarScreen() {
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<(typeof calendarEvents)[number] | null>(null);
   const [showCompletedEvents, setShowCompletedEvents] = useState(true);
+  const [isHidingCompletedEvents, setIsHidingCompletedEvents] = useState(false);
+  const completedStepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAnimatingCompletedToggle = useRef(false);
+  const [visibleCompletedEventsCount, setVisibleCompletedEventsCount] = useState(0);
+  const [showCompletedEventsHiddenHint, setShowCompletedEventsHiddenHint] = useState(false);
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
 
   const [listWeekOffset, setListWeekOffset] = useState(0);
@@ -435,7 +475,15 @@ export default function CalendarScreen() {
       clearInterval(timer);
     };
   }, []);
-
+  useEffect(() => {
+    return () => {
+      if (completedStepTimer.current) {
+        clearTimeout(completedStepTimer.current);
+        completedStepTimer.current = null;
+      }
+      isAnimatingCompletedToggle.current = false;
+    };
+  }, []);
   const eventDayKeys = useMemo(() => {
     return new Set(
       calendarEvents
@@ -543,6 +591,17 @@ export default function CalendarScreen() {
   }, [calendarEvents, selectedListDay, selectedMonthCell, selectedYearDayKey, timelineDayKeys, viewMode]);
   const activePeriodEvents = useMemo(() => periodEvents.filter((event) => !event.done), [periodEvents]);
   const completedPeriodEvents = useMemo(() => periodEvents.filter((event) => event.done), [periodEvents]);
+  const visibleCompletedPeriodEvents = completedPeriodEvents.slice(0, visibleCompletedEventsCount);
+  useEffect(() => {
+    if (isAnimatingCompletedToggle.current) {
+      return;
+    }
+    if (showCompletedEvents) {
+      setVisibleCompletedEventsCount(completedPeriodEvents.length);
+    } else {
+      setVisibleCompletedEventsCount((prev) => Math.min(prev, completedPeriodEvents.length));
+    }
+  }, [completedPeriodEvents.length, showCompletedEvents]);
 
   const periodSummary = useMemo(() => {
     if (viewMode === 'list') {
@@ -664,8 +723,64 @@ export default function CalendarScreen() {
     setSelectedEvent(null);
     router.push({ pathname: '/task-editor', params: { taskId } });
   };
+  const clearCompletedSequenceTimer = () => {
+    if (completedStepTimer.current) {
+      clearTimeout(completedStepTimer.current);
+      completedStepTimer.current = null;
+    }
+    isAnimatingCompletedToggle.current = false;
+  };
   const toggleCompletedEventsVisibility = () => {
-    setShowCompletedEvents((prev) => !prev);
+    clearCompletedSequenceTimer();
+
+    if (showCompletedEvents) {
+      setIsHidingCompletedEvents(true);
+      setShowCompletedEventsHiddenHint(false);
+      const total = visibleCompletedEventsCount;
+      if (total <= 0) {
+        setShowCompletedEvents(false);
+        setIsHidingCompletedEvents(false);
+        setShowCompletedEventsHiddenHint(true);
+        return;
+      }
+      isAnimatingCompletedToggle.current = true;
+      const hideNext = () => {
+        setVisibleCompletedEventsCount((previous) => {
+          const next = Math.max(0, previous - 1);
+          if (next === 0) {
+            isAnimatingCompletedToggle.current = false;
+            setShowCompletedEvents(false);
+            setIsHidingCompletedEvents(false);
+            setShowCompletedEventsHiddenHint(true);
+          } else {
+            completedStepTimer.current = setTimeout(hideNext, COMPLETED_CLOSE_STAGGER_MS);
+          }
+          return next;
+        });
+      };
+      hideNext();
+      return;
+    }
+
+    setShowCompletedEvents(true);
+    setIsHidingCompletedEvents(false);
+    setShowCompletedEventsHiddenHint(false);
+    const total = completedPeriodEvents.length;
+    if (total <= 0) {
+      setVisibleCompletedEventsCount(0);
+      return;
+    }
+    setVisibleCompletedEventsCount(0);
+    isAnimatingCompletedToggle.current = true;
+    const showNext = (nextCount: number) => {
+      setVisibleCompletedEventsCount(nextCount);
+      if (nextCount >= total) {
+        isAnimatingCompletedToggle.current = false;
+        return;
+      }
+      completedStepTimer.current = setTimeout(() => showNext(nextCount + 1), COMPLETED_OPEN_STAGGER_MS);
+    };
+    showNext(1);
   };
   const renderEventRow = (
     event: (typeof periodEvents)[number],
@@ -679,7 +794,8 @@ export default function CalendarScreen() {
       <View style={styles.eventText}>
         <Text style={[styles.eventTitle, event.done && styles.eventTitleDone]}>{event.title}</Text>
         <Text style={styles.eventMeta}>
-          {formatTaskDateTime(event.scheduledAt)} · {formatDurationLabel(event.durationMinutes)} · {event.categoryName}
+          {formatEventDateTimeRange(event.scheduledAt, event.durationMinutes)} · {formatDurationLabel(event.durationMinutes)} ·{' '}
+          {event.categoryName}
           {event.repeatable ? ' · Repeats' : ''}
         </Text>
         {event.notes ? <Text style={styles.eventNotes}>{event.notes}</Text> : null}
@@ -909,10 +1025,7 @@ export default function CalendarScreen() {
                               {event.title}
                             </Text>
                             <Text numberOfLines={1} style={styles.timelineEventMeta}>
-                              {new Date(event.scheduledAt).toLocaleTimeString(undefined, {
-                                hour: 'numeric',
-                                minute: '2-digit',
-                              })}
+                              {formatEventTimeRange(event.scheduledAt, event.durationMinutes)}
                             </Text>
                           </Pressable>
                         );
@@ -1040,7 +1153,7 @@ export default function CalendarScreen() {
                             cell.inMonth && [styles.miniMonthDaySelected, { backgroundColor: `${theme.primary}18` }],
                           !cell.inMonth && styles.miniMonthDayMuted,
                           eventDayKeys.has(cell.dayKey) &&
-                            cell.inMonth && [styles.miniMonthDayEvent, { color: theme.primary }],
+                            cell.inMonth && styles.miniMonthDayEvent,
                           cell.dayKey === todayDayKey &&
                             cell.inMonth && [styles.miniMonthDayToday, { borderColor: theme.secondary }],
                         ]}>
@@ -1066,46 +1179,57 @@ export default function CalendarScreen() {
       </AppCard>
 
       {viewMode === 'list' || viewMode === 'month' || viewMode === 'year' ? (
-        <AppCard delay={160}>
-          <Text style={styles.eventsLabel}>Events</Text>
-          <CardTitle accent={theme.primary} icon="event" title="Synced From Tasks" />
-          <Text style={styles.selectedDayText}>{periodLabel}</Text>
+        <>
+          <AppCard delay={160}>
+            <SectionLabel text="To-Do List" />
+            <Text style={styles.selectedDayText}>{periodLabel}</Text>
 
-          {activePeriodEvents.length === 0 && completedPeriodEvents.length === 0 ? (
-            <Text style={styles.emptyText}>{getEmptyText(viewMode)}</Text>
-          ) : null}
-          {activePeriodEvents.length === 0 && completedPeriodEvents.length > 0 ? (
-            <Text style={styles.completedOnlyHint}>All events here are completed.</Text>
-          ) : null}
-          {activePeriodEvents.map((event) => renderEventRow(event, false))}
-
-          <View style={styles.completedEventsSection}>
-            <Pressable
-              onPress={toggleCompletedEventsVisibility}
-              style={[styles.completedEventsToggle, { borderColor: `${theme.primary}33` }]}>
-              <Text style={[styles.completedEventsToggleText, { color: theme.primary }]}>
-                Completed ({completedPeriodEvents.length})
-              </Text>
-              <MaterialIcons
-                color={theme.primary}
-                name={showCompletedEvents ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-                size={18}
-              />
-            </Pressable>
-            {showCompletedEvents ? (
-              <Animated.View
-                entering={FadeInDown.duration(COMPLETED_DROPDOWN_OPEN_MS)}
-                exiting={FadeOutUp.duration(COMPLETED_DROPDOWN_CLOSE_MS)}
-                style={styles.completedEventsBody}>
-                {completedPeriodEvents.length === 0 ? (
-                  <Text style={styles.completedEventsEmpty}>No completed events for this period.</Text>
-                ) : (
-                  completedPeriodEvents.map((event) => renderEventRow(event, true))
-                )}
-              </Animated.View>
+            {activePeriodEvents.length === 0 && completedPeriodEvents.length === 0 ? (
+              <Text style={styles.emptyText}>{getEmptyText(viewMode)}</Text>
+            ) : activePeriodEvents.length === 0 ? (
+              <Text style={styles.emptyText}>No active events for this period.</Text>
             ) : null}
-          </View>
-        </AppCard>
+            {activePeriodEvents.map((event) => renderEventRow(event, false))}
+          </AppCard>
+
+          <AppCard delay={190}>
+            <View style={styles.completedHeaderRow}>
+              <SectionLabel text="Completed" />
+              <Pressable
+                disabled={isAnimatingCompletedToggle.current}
+                onPress={toggleCompletedEventsVisibility}
+                style={[styles.completedEventsToggle, { borderColor: `${theme.primary}33` }]}>
+                <Text style={[styles.completedEventsToggleText, { color: theme.primary }]}>
+                  {showCompletedEvents ? 'Hide' : 'Show All'} ({completedPeriodEvents.length})
+                </Text>
+                <MaterialIcons
+                  color={theme.primary}
+                  name={showCompletedEvents ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+                  size={18}
+                />
+              </Pressable>
+            </View>
+            <View style={styles.completedEventsBody}>
+              {(showCompletedEvents || isHidingCompletedEvents) && visibleCompletedPeriodEvents.length > 0 ? (
+                visibleCompletedPeriodEvents.map((event) => (
+                  <Animated.View
+                    key={`completed-event-${event.id}`}
+                    layout={LinearTransition.duration(220)}
+                    entering={FadeInDown.duration(COMPLETED_DROPDOWN_OPEN_MS).easing(Easing.out(Easing.cubic))}
+                    exiting={FadeOutDown.duration(COMPLETED_DROPDOWN_CLOSE_MS).easing(Easing.inOut(Easing.cubic))}>
+                    {renderEventRow(event, true)}
+                  </Animated.View>
+                ))
+              ) : showCompletedEvents ? (
+                <Text style={styles.completedEventsEmpty}>No completed events for this period.</Text>
+              ) : showCompletedEventsHiddenHint ? (
+                <Animated.View entering={FadeIn.duration(170).easing(Easing.out(Easing.quad))}>
+                  <Text style={styles.completedCollapsedHint}>Completed tasks are hidden.</Text>
+                </Animated.View>
+              ) : null}
+            </View>
+          </AppCard>
+        </>
       ) : null}
 
       <Modal animationType="fade" transparent visible={Boolean(selectedEvent)}>
@@ -1140,7 +1264,9 @@ export default function CalendarScreen() {
               <View style={styles.detailInfoRow}>
                 <MaterialIcons color="#667291" name="schedule" size={16} />
                 <Text style={styles.detailInfoText}>
-                  {selectedEvent ? formatTaskDateTime(selectedEvent.scheduledAt) : ''}
+                  {selectedEvent
+                    ? formatEventDateTimeRange(selectedEvent.scheduledAt, selectedEvent.durationMinutes)
+                    : ''}
                 </Text>
               </View>
               <View style={styles.detailInfoRow}>
@@ -1232,7 +1358,7 @@ const styles = StyleSheet.create({
   },
   modeMenuPopover: {
     position: 'absolute',
-    left: 136,
+    left: MODE_MENU_POPOVER_LEFT,
     right: 0,
     top: 0,
     height: 42,
@@ -1250,7 +1376,7 @@ const styles = StyleSheet.create({
   },
   modeMenuScrollContent: {
     alignItems: 'center',
-    gap: 8,
+    gap: MODE_MENU_PILL_GAP,
     paddingRight: 6,
   },
   modePill: {
@@ -1356,7 +1482,7 @@ const styles = StyleSheet.create({
   timelineWrap: {
     borderWidth: 1,
     borderRadius: 16,
-    padding: 8,
+    padding: TIMELINE_WRAP_PADDING,
     gap: 8,
     overflow: 'hidden',
   },
@@ -1387,7 +1513,7 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   timeRailSpacer: {
-    width: 50,
+    width: TIMELINE_RAIL_WIDTH,
   },
   timelineDayHeaderCell: {
     flex: 1,
@@ -1421,14 +1547,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   timeRail: {
-    width: 50,
+    width: TIMELINE_RAIL_WIDTH,
     position: 'relative',
+    alignItems: 'center',
   },
   timeRailText: {
     position: 'absolute',
     left: 0,
-    width: 44,
-    textAlign: 'right',
+    right: 0,
+    width: '100%',
+    textAlign: 'center',
     fontSize: 10,
     color: '#7A8399',
     fontWeight: '600',
@@ -1638,13 +1766,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 3,
   },
-  eventsLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#586078',
-    letterSpacing: 0.2,
-    textTransform: 'uppercase',
-  },
   emptyText: {
     fontSize: 14,
     color: '#6A738D',
@@ -1655,33 +1776,39 @@ const styles = StyleSheet.create({
     color: '#6A738D',
     marginBottom: 10,
   },
-  completedOnlyHint: {
-    fontSize: 13,
-    color: '#6F7893',
-    fontWeight: '600',
-  },
   completedEventsSection: {
     marginTop: 4,
     gap: 8,
   },
-  completedEventsToggle: {
+  completedHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  completedEventsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: '#F7FAFF',
+    paddingVertical: 5,
+    backgroundColor: '#F6F9FF',
   },
   completedEventsToggleText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   completedEventsEmpty: {
     fontSize: 13,
     color: '#707A95',
     fontWeight: '600',
+  },
+  completedCollapsedHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#707A95',
   },
   completedEventsBody: {
     gap: 8,

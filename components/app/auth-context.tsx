@@ -1,7 +1,19 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Platform } from 'react-native';
+import {
+  GoogleAuthProvider,
+  OAuthProvider,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithCredential,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  updateProfile,
+} from 'firebase/auth';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-import { isSupabaseConfigured, supabase } from './supabase-client';
+import { auth, db, getWebFirebaseAuthSupport, isFirebaseConfigured } from './firebase-client';
 
 type AuthUser = {
   id: string;
@@ -9,6 +21,8 @@ type AuthUser = {
   email: string;
   themeId: string | null;
 };
+
+type OAuthProviderId = 'google' | 'apple' | 'azure';
 
 type AuthSuccess = {
   ok: true;
@@ -25,109 +39,269 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isHydrated: boolean;
   signIn: (email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
-  signUp: (
-    name: string,
-    email: string,
-    password: string
-  ) => Promise<AuthSuccess | AuthFailure>;
+  signInWithGoogleIdToken: (idToken: string, accessToken?: string) => Promise<AuthSuccess | AuthFailure>;
+  signInWithProvider: (provider: OAuthProviderId) => Promise<AuthSuccess | AuthFailure>;
+  signUp: (name: string, email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function mapSessionUser(session: Session | null): AuthUser | null {
-  if (!session?.user) {
-    return null;
-  }
-
-  const metadata = session.user.user_metadata ?? {};
-  const derivedName =
-    typeof metadata.name === 'string'
-      ? metadata.name
-      : typeof metadata.full_name === 'string'
-        ? metadata.full_name
-        : '';
-
+function buildFallbackAuthUser(firebaseUser: {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+}): AuthUser {
   return {
-    id: session.user.id,
-    name: derivedName || session.user.email?.split('@')[0] || 'User',
-    email: session.user.email ?? '',
-    themeId: typeof metadata.theme_id === 'string' ? metadata.theme_id : null,
+    id: firebaseUser.uid,
+    name: firebaseUser.displayName?.trim() || firebaseUser.email?.split('@')[0] || 'User',
+    email: firebaseUser.email ?? '',
+    themeId: 'ocean',
   };
 }
 
+function mapFirebaseAuthError(error: unknown) {
+  const code = typeof error === 'object' && error && 'code' in error ? String((error as { code: string }).code) : '';
+  const message =
+    typeof error === 'object' && error && 'message' in error ? String((error as { message: string }).message) : '';
+  const webAuthSupport = getWebFirebaseAuthSupport();
+
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'Invalid email format.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'Invalid email or password.';
+    case 'auth/email-already-in-use':
+      return 'This email is already registered.';
+    case 'auth/weak-password':
+      return 'Password is too weak.';
+    case 'auth/popup-closed-by-user':
+      return 'Sign-in popup was closed.';
+    case 'auth/popup-blocked':
+      return 'Popup was blocked. Allow popups and try again.';
+    case 'auth/operation-not-allowed':
+      return 'This sign-in method is not enabled in Firebase Auth.';
+    case 'auth/invalid-continue-uri':
+    case 'auth/unauthorized-domain':
+    case 'auth/auth-domain-config-required':
+      return webAuthSupport.isSupported
+        ? 'Firebase web sign-in needs a valid auth domain and authorized web origin.'
+        : webAuthSupport.message;
+    default:
+      return message || 'Authentication failed. Please try again.';
+  }
+}
+
+function ensureFirebaseConfigured(): AuthFailure | null {
+  if (auth && db && isFirebaseConfigured) {
+    return null;
+  }
+
+  return {
+    ok: false,
+    error:
+      'Firebase is not configured. Set EXPO_PUBLIC_FIREBASE_API_KEY, EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN, EXPO_PUBLIC_FIREBASE_PROJECT_ID, EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET, EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID, and EXPO_PUBLIC_FIREBASE_APP_ID.',
+  };
+}
+
+async function syncSignedInUserProfile(firebaseUser: {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+}) {
+  await setDoc(
+    doc(db!, 'users', firebaseUser.uid),
+    {
+      name: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'User',
+      email: firebaseUser.email ?? '',
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const profileUnsubscribeRef = useRef<null | (() => void)>(null);
 
   useEffect(() => {
-    let isMounted = true;
+    const firebaseAuth = auth;
+    const firestore = db;
 
-    if (!supabase) {
+    if (!firebaseAuth || !firestore) {
       setIsHydrated(true);
       return;
     }
 
-    void supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (isMounted) {
-          setSession(data.session ?? null);
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsHydrated(true);
-        }
-      });
+    const unsubscribeAuth = onAuthStateChanged(firebaseAuth, (firebaseUser) => {
+      if (profileUnsubscribeRef.current) {
+        profileUnsubscribeRef.current();
+        profileUnsubscribeRef.current = null;
+      }
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
+      if (!firebaseUser) {
+        setUser(null);
+        setIsHydrated(true);
+        return;
+      }
+
+      setUser(buildFallbackAuthUser(firebaseUser));
+      setIsHydrated(true);
+
+      const userRef = doc(firestore, 'users', firebaseUser.uid);
+
+      profileUnsubscribeRef.current = onSnapshot(
+        userRef,
+        (snapshot) => {
+          const profile = snapshot.data() as { name?: string; themeId?: string; email?: string } | undefined;
+          const displayName =
+            profile?.name?.trim() ||
+            firebaseUser.displayName?.trim() ||
+            firebaseUser.email?.split('@')[0] ||
+            'User';
+
+          if (!snapshot.exists()) {
+            void setDoc(
+              userRef,
+              {
+                name: displayName,
+                email: firebaseUser.email ?? '',
+                themeId: 'ocean',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              },
+              { merge: true }
+            );
+          }
+
+          setUser({
+            id: firebaseUser.uid,
+            name: displayName,
+            email: firebaseUser.email ?? profile?.email ?? '',
+            themeId: profile?.themeId ?? 'ocean',
+          });
+        },
+        (error) => {
+          console.error('Failed to observe Firebase user profile', error);
+          setUser(buildFallbackAuthUser(firebaseUser));
+        }
+      );
     });
 
     return () => {
-      isMounted = false;
-      subscription.unsubscribe();
+      unsubscribeAuth();
+      if (profileUnsubscribeRef.current) {
+        profileUnsubscribeRef.current();
+        profileUnsubscribeRef.current = null;
+      }
     };
   }, []);
 
-  const user = useMemo(() => mapSessionUser(session), [session]);
-
   const signIn: AuthContextValue['signIn'] = async (email, password) => {
-    if (!supabase || !isSupabaseConfigured) {
-      return {
-        ok: false,
-        error: 'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.',
-      };
+    const configError = ensureFirebaseConfigured();
+    if (configError) {
+      return configError;
     }
 
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedPassword = password.trim();
-
     if (!normalizedEmail || !normalizedPassword) {
       return { ok: false, error: 'Email and password are required.' };
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password: normalizedPassword,
-    });
+    try {
+      await signInWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: mapFirebaseAuthError(error) };
+    }
+  };
 
-    if (error) {
-      return { ok: false, error: error.message };
+  const signInWithGoogleIdToken: AuthContextValue['signInWithGoogleIdToken'] = async (idToken, accessToken) => {
+    const configError = ensureFirebaseConfigured();
+    if (configError) {
+      return configError;
     }
 
-    return { ok: true };
+    const normalizedIdToken = idToken.trim();
+    if (!normalizedIdToken) {
+      return {
+        ok: false,
+        error: 'Google sign-in did not return an ID token.',
+      };
+    }
+
+    try {
+      const credential = GoogleAuthProvider.credential(normalizedIdToken, accessToken);
+      const result = await signInWithCredential(auth!, credential);
+
+      await syncSignedInUserProfile(result.user);
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: mapFirebaseAuthError(error) };
+    }
+  };
+
+  const signInWithProvider: AuthContextValue['signInWithProvider'] = async (provider) => {
+    const configError = ensureFirebaseConfigured();
+    if (configError) {
+      return configError;
+    }
+
+    if (Platform.OS !== 'web') {
+      return {
+        ok: false,
+        error: 'Google/Apple/Microsoft login is enabled on web. Use email login on mobile for now.',
+      };
+    }
+
+    const webAuthSupport = getWebFirebaseAuthSupport();
+    if (!webAuthSupport.isSupported) {
+      if (webAuthSupport.shouldRedirectToSuggestedUrl && webAuthSupport.suggestedUrl && typeof window !== 'undefined') {
+        window.location.assign(webAuthSupport.suggestedUrl);
+        return {
+          ok: true,
+          message: `Redirecting to ${webAuthSupport.suggestedUrl} so Firebase web sign-in can continue.`,
+        };
+      }
+
+      return {
+        ok: false,
+        error: webAuthSupport.message,
+      };
+    }
+
+    const providerInstance =
+      provider === 'google'
+        ? new GoogleAuthProvider()
+        : provider === 'apple'
+          ? new OAuthProvider('apple.com')
+          : new OAuthProvider('microsoft.com');
+
+    if (provider === 'google') {
+      providerInstance.setCustomParameters({
+        prompt: 'select_account',
+      });
+    }
+
+    try {
+      const result = await signInWithPopup(auth!, providerInstance);
+      await syncSignedInUserProfile(result.user);
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: mapFirebaseAuthError(error) };
+    }
   };
 
   const signUp: AuthContextValue['signUp'] = async (name, email, password) => {
-    if (!supabase || !isSupabaseConfigured) {
-      return {
-        ok: false,
-        error: 'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.',
-      };
+    const configError = ensureFirebaseConfigured();
+    if (configError) {
+      return configError;
     }
 
     const normalizedName = name.trim();
@@ -138,45 +312,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: 'Name, email, and password are required.' };
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password: normalizedPassword,
-      options: {
-        data: {
+    try {
+      const credential = await createUserWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
+      await updateProfile(credential.user, { displayName: normalizedName });
+
+      await setDoc(
+        doc(db!, 'users', credential.user.uid),
+        {
           name: normalizedName,
+          email: normalizedEmail,
+          themeId: 'ocean',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
         },
-      },
-    });
+        { merge: true }
+      );
 
-    if (error) {
-      return { ok: false, error: error.message };
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: mapFirebaseAuthError(error) };
     }
-
-    if (!data.session) {
-      return {
-        ok: true,
-        message: 'Account created. Check your email to confirm before signing in.',
-      };
-    }
-
-    return { ok: true };
   };
 
   const signOut = async () => {
-    if (!supabase) {
+    if (!auth) {
       return;
     }
-    await supabase.auth.signOut();
+
+    await firebaseSignOut(auth);
   };
 
-  const value: AuthContextValue = {
-    user,
-    isAuthenticated: Boolean(user),
-    isHydrated,
-    signIn,
-    signUp,
-    signOut,
-  };
+  const value: AuthContextValue = useMemo(
+    () => ({
+      user,
+      isAuthenticated: Boolean(user),
+      isHydrated,
+      signIn,
+      signInWithGoogleIdToken,
+      signInWithProvider,
+      signUp,
+      signOut,
+    }),
+    [isHydrated, user]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

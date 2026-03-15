@@ -1,12 +1,15 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { useAppTheme } from '@/components/app/theme-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+
+const TAB_BAR_GLASS_BG_WEB = 'rgba(247, 250, 255, 0.26)';
+const TAB_BAR_GLASS_BG_NATIVE = 'rgba(247, 250, 255, 0.95)';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -22,12 +25,29 @@ export default function TabLayout() {
           height: Platform.select({ ios: 86, default: 70 }),
           paddingTop: 8,
           paddingBottom: Platform.select({ ios: 20, default: 10 }),
-          backgroundColor: theme.tabBackground,
+          backgroundColor: Platform.OS === 'web' ? 'transparent' : TAB_BAR_GLASS_BG_NATIVE,
           borderTopWidth: 1,
-          borderTopColor: theme.tabBorder,
+          borderTopColor: `${theme.tabBorder}80`,
           position: 'absolute',
           elevation: 0,
+          shadowOpacity: 0,
+          overflow: 'hidden',
         },
+        tabBarBlurEffect: undefined,
+        tabBarBackground: () => (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundColor: Platform.OS === 'web' ? TAB_BAR_GLASS_BG_WEB : TAB_BAR_GLASS_BG_NATIVE,
+              },
+              {
+                borderTopColor: `${theme.tabBorder}80`,
+              },
+              Platform.OS === 'web' ? ({ backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' } as any) : null,
+            ]}
+          />
+        ),
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '600',

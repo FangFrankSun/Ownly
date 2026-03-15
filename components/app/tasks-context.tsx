@@ -1,7 +1,20 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
 
 import { useAuth } from './auth-context';
-import { supabase } from './supabase-client';
+import { db } from './firebase-client';
 
 export type TaskCategory = {
   id: string;
@@ -51,19 +64,8 @@ type TasksContextValue = {
   deleteCategory: (categoryId: string) => void;
   addTask: (draft: TaskDraftInput) => void;
   updateTask: (taskId: string, draft: TaskDraftInput) => void;
+  deleteTask: (taskId: string) => void;
   toggleTaskDone: (taskId: string) => void;
-};
-
-type TaskRow = {
-  id: string;
-  title: string;
-  notes: string | null;
-  category_id: string;
-  scheduled_at: string;
-  duration_minutes?: number | null;
-  repeatable: boolean;
-  done: boolean;
-  created_at: number;
 };
 
 const seedCategoryTemplate = [
@@ -73,7 +75,6 @@ const seedCategoryTemplate = [
 ] as const;
 
 const TasksContext = createContext<TasksContextValue | null>(null);
-const DURATION_TAG_REGEX = /\s*\[\[DURATION:(\d{1,4})\]\]\s*$/;
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
@@ -94,49 +95,6 @@ function normalizedDurationMinutes(value: number | null | undefined) {
   return Math.max(5, Math.min(24 * 60, Math.round(value as number)));
 }
 
-function isMissingDurationColumn(error: { message?: string } | null | undefined) {
-  return Boolean(error?.message?.includes('duration_minutes'));
-}
-
-function appendDurationTag(notes: string, durationMinutes: number) {
-  const clean = notes.replace(DURATION_TAG_REGEX, '').trimEnd();
-  return `${clean} [[DURATION:${normalizedDurationMinutes(durationMinutes)}]]`.trim();
-}
-
-function parseNotesAndDuration(notes: string | null | undefined, fallbackDuration: number | null | undefined) {
-  const raw = notes ?? '';
-  const match = raw.match(DURATION_TAG_REGEX);
-  if (!match) {
-    return {
-      notes: raw,
-      durationMinutes: normalizedDurationMinutes(fallbackDuration),
-    };
-  }
-
-  const taggedDuration = Number(match[1]);
-  return {
-    notes: raw.replace(DURATION_TAG_REGEX, '').trimEnd(),
-    durationMinutes: normalizedDurationMinutes(
-      Number.isFinite(taggedDuration) ? taggedDuration : fallbackDuration
-    ),
-  };
-}
-
-function toTaskItem(row: TaskRow): TaskItem {
-  const parsed = parseNotesAndDuration(row.notes, row.duration_minutes);
-  return {
-    id: row.id,
-    title: row.title,
-    notes: parsed.notes,
-    categoryId: row.category_id,
-    scheduledAt: row.scheduled_at,
-    durationMinutes: parsed.durationMinutes,
-    repeatable: row.repeatable,
-    done: row.done,
-    createdAt: row.created_at ?? Date.now(),
-  };
-}
-
 function buildSeedCategories(userId: string): TaskCategory[] {
   const short = userId.slice(0, 8);
   return seedCategoryTemplate.map((category, index) => ({
@@ -146,68 +104,25 @@ function buildSeedCategories(userId: string): TaskCategory[] {
   }));
 }
 
-async function fetchCloudTaskData(userId: string) {
-  if (!supabase) {
-    return {
-      categories: buildSeedCategories(userId),
-      tasks: [] as TaskItem[],
-    };
-  }
-
-  const categoriesResponse = await supabase
-    .from('task_categories')
-    .select('id,name,color')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
-
-  if (categoriesResponse.error) {
-    throw categoriesResponse.error;
-  }
-
-  let categories = (categoriesResponse.data ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    color: row.color,
-  }));
-
-  if (categories.length === 0) {
-    const seed = buildSeedCategories(userId);
-    await supabase.from('task_categories').upsert(
-      seed.map((category) => ({
-        id: category.id,
-        user_id: userId,
-        name: category.name,
-        color: category.color,
-        created_at: Date.now(),
-      })),
-      { onConflict: 'id' }
-    );
-    categories = seed;
-  }
-
-  const tasksResponse = await supabase
-    .from('tasks')
-    .select('id,title,notes,category_id,scheduled_at,duration_minutes,repeatable,done,created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-
-  let finalTasksResponse = tasksResponse;
-  if (tasksResponse.error && isMissingDurationColumn(tasksResponse.error)) {
-    finalTasksResponse = await supabase
-      .from('tasks')
-      .select('id,title,notes,category_id,scheduled_at,repeatable,done,created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-  }
-
-  if (finalTasksResponse.error) {
-    throw finalTasksResponse.error;
-  }
-
-  const tasks = (finalTasksResponse.data as TaskRow[] | null)?.map(toTaskItem) ?? [];
+function toCategory(raw: { id?: string; name?: string; color?: string }, fallbackId: string): TaskCategory {
   return {
-    categories,
-    tasks,
+    id: raw.id || fallbackId,
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : 'General',
+    color: typeof raw.color === 'string' && raw.color.trim() ? raw.color : '#4C6FFF',
+  };
+}
+
+function toTask(raw: Partial<TaskItem> & { id?: string }, fallbackId: string): TaskItem {
+  return {
+    id: raw.id || fallbackId,
+    title: typeof raw.title === 'string' ? raw.title : '',
+    notes: typeof raw.notes === 'string' ? raw.notes : '',
+    categoryId: typeof raw.categoryId === 'string' ? raw.categoryId : '',
+    scheduledAt: normalizedTimestamp(typeof raw.scheduledAt === 'string' ? raw.scheduledAt : new Date().toISOString()),
+    durationMinutes: normalizedDurationMinutes(raw.durationMinutes),
+    repeatable: Boolean(raw.repeatable),
+    done: Boolean(raw.done),
+    createdAt: Number.isFinite(raw.createdAt) ? Number(raw.createdAt) : Date.now(),
   };
 }
 
@@ -215,94 +130,92 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-
-  const refreshFromCloud = async (userId: string) => {
-    try {
-      const data = await fetchCloudTaskData(userId);
-      setCategories(data.categories);
-      setTasks(data.tasks);
-    } catch (error) {
-      console.error('Failed to fetch task data from Supabase', error);
-    }
-  };
+  const seededCategoriesRef = useRef(false);
 
   useEffect(() => {
-    let isMounted = true;
-
-    if (!user) {
+    if (!user || !db) {
       setCategories([]);
       setTasks([]);
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    const load = async () => {
-      const data = await fetchCloudTaskData(user.id);
-      if (isMounted) {
-        setCategories(data.categories);
-        setTasks(data.tasks);
-      }
-    };
-
-    void load().catch((error) => {
-      console.error('Failed to fetch task data from Supabase', error);
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
+      seededCategoriesRef.current = false;
       return;
     }
 
-    const interval = setInterval(() => {
-      void refreshFromCloud(user.id);
-    }, 7000);
+    const categoriesQuery = query(
+      collection(db, 'users', user.id, 'task_categories'),
+      orderBy('createdAt', 'asc')
+    );
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [user]);
+    const tasksQuery = query(collection(db, 'users', user.id, 'tasks'), orderBy('createdAt', 'desc'));
 
-  useEffect(() => {
-    if (!user || !supabase) {
-      return;
-    }
+    const unsubscribeCategories = onSnapshot(
+      categoriesQuery,
+      (snapshot) => {
+        const nextCategories = snapshot.docs.map((categoryDoc) =>
+          toCategory(
+            {
+              id: categoryDoc.id,
+              ...(categoryDoc.data() as { name?: string; color?: string }),
+            },
+            categoryDoc.id
+          )
+        );
 
-    const channel = supabase
-      .channel(`tasks-sync-${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'task_categories', filter: `user_id=eq.${user.id}` },
-        () => {
-          void refreshFromCloud(user.id);
+        if (nextCategories.length === 0 && !seededCategoriesRef.current) {
+          seededCategoriesRef.current = true;
+          const seed = buildSeedCategories(user.id);
+          const batch = writeBatch(db);
+          for (const category of seed) {
+            batch.set(doc(db, 'users', user.id, 'task_categories', category.id), {
+              name: category.name,
+              color: category.color,
+              createdAt: Date.now(),
+            });
+          }
+          void batch.commit().catch((error) => {
+            console.error('Failed to seed Firebase categories', error);
+          });
+          return;
         }
-      )
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${user.id}` }, () => {
-        void refreshFromCloud(user.id);
-      })
-      .subscribe();
+
+        setCategories(nextCategories);
+      },
+      (error) => {
+        console.error('Failed to observe Firebase categories', error);
+      }
+    );
+
+    const unsubscribeTasks = onSnapshot(
+      tasksQuery,
+      (snapshot) => {
+        const nextTasks = snapshot.docs.map((taskDoc) =>
+          toTask(
+            {
+              id: taskDoc.id,
+              ...(taskDoc.data() as Partial<TaskItem>),
+            },
+            taskDoc.id
+          )
+        );
+        setTasks(nextTasks);
+      },
+      (error) => {
+        console.error('Failed to observe Firebase tasks', error);
+      }
+    );
 
     return () => {
-      void supabase.removeChannel(channel);
+      unsubscribeCategories();
+      unsubscribeTasks();
     };
   }, [user]);
 
   const addCategory = (name: string, color: string) => {
     const normalizedName = name.trim();
-
     if (!normalizedName) {
       return categories[0]?.id ?? '';
     }
 
-    const existing = categories.find(
-      (category) => category.name.toLowerCase() === normalizedName.toLowerCase()
-    );
-
+    const existing = categories.find((category) => category.name.toLowerCase() === normalizedName.toLowerCase());
     if (existing) {
       return existing.id;
     }
@@ -315,29 +228,21 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
     setCategories((prev) => [...prev, newCategory]);
 
-    if (user && supabase) {
-      void supabase
-        .from('task_categories')
-        .insert({
-          id: newCategory.id,
-          user_id: user.id,
-          name: newCategory.name,
-          color: newCategory.color,
-          created_at: Date.now(),
-        })
-        .then(({ error }) => {
-          if (error) {
-            console.error('Failed to save category to Supabase', error);
-          }
-          void refreshFromCloud(user.id);
-        });
+    if (user && db) {
+      void setDoc(doc(db, 'users', user.id, 'task_categories', newCategory.id), {
+        name: newCategory.name,
+        color: newCategory.color,
+        createdAt: Date.now(),
+      }).catch((error) => {
+        console.error('Failed to save Firebase category', error);
+      });
     }
 
     return newCategory.id;
   };
 
   const deleteCategory = (categoryId: string) => {
-    if (!user) {
+    if (!user || !db) {
       return;
     }
 
@@ -351,38 +256,26 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     }
 
     setCategories((prev) => prev.filter((category) => category.id !== categoryId));
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.categoryId === categoryId ? { ...task, categoryId: fallback.id } : task
-      )
-    );
+    setTasks((prev) => prev.map((task) => (task.categoryId === categoryId ? { ...task, categoryId: fallback.id } : task)));
 
-    if (!supabase) {
-      return;
-    }
+    void (async () => {
+      try {
+        const tasksToReassignQuery = query(
+          collection(db, 'users', user.id, 'tasks'),
+          where('categoryId', '==', categoryId)
+        );
+        const tasksToReassign = await getDocs(tasksToReassignQuery);
 
-    void supabase
-      .from('tasks')
-      .update({ category_id: fallback.id })
-      .eq('user_id', user.id)
-      .eq('category_id', categoryId)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to remap tasks for deleted category', error);
+        const batch = writeBatch(db);
+        for (const taskDoc of tasksToReassign.docs) {
+          batch.update(taskDoc.ref, { categoryId: fallback.id });
         }
-      });
-
-    void supabase
-      .from('task_categories')
-      .delete()
-      .eq('user_id', user.id)
-      .eq('id', categoryId)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to delete category from Supabase', error);
-        }
-        void refreshFromCloud(user.id);
-      });
+        batch.delete(doc(db, 'users', user.id, 'task_categories', categoryId));
+        await batch.commit();
+      } catch (error) {
+        console.error('Failed to delete Firebase category', error);
+      }
+    })();
   };
 
   const updateCategoryColor = (categoryId: string, color: string) => {
@@ -390,29 +283,19 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setCategories((prev) =>
-      prev.map((category) => (category.id === categoryId ? { ...category, color } : category))
-    );
+    setCategories((prev) => prev.map((category) => (category.id === categoryId ? { ...category, color } : category)));
 
-    if (!user || !supabase) {
+    if (!user || !db) {
       return;
     }
 
-    void supabase
-      .from('task_categories')
-      .update({ color })
-      .eq('user_id', user.id)
-      .eq('id', categoryId)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to update category color in Supabase', error);
-        }
-        void refreshFromCloud(user.id);
-      });
+    void updateDoc(doc(db, 'users', user.id, 'task_categories', categoryId), { color }).catch((error) => {
+      console.error('Failed to update Firebase category color', error);
+    });
   };
 
   const addTask = (draft: TaskDraftInput) => {
-    if (!user) {
+    if (!user || !db) {
       return;
     }
 
@@ -430,50 +313,13 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
     setTasks((prev) => [newTask, ...prev]);
 
-    if (!supabase) {
-      return;
-    }
-
-    void (async () => {
-      const payload = {
-        id: newTask.id,
-        user_id: user.id,
-        title: newTask.title,
-        notes: newTask.notes,
-        category_id: newTask.categoryId,
-        scheduled_at: newTask.scheduledAt,
-        duration_minutes: newTask.durationMinutes,
-        repeatable: newTask.repeatable,
-        done: newTask.done,
-        created_at: newTask.createdAt,
-      };
-
-      let { error } = await supabase.from('tasks').insert(payload);
-      if (error && isMissingDurationColumn(error)) {
-        ({ error } = await supabase
-          .from('tasks')
-          .insert({
-            id: newTask.id,
-            user_id: user.id,
-            title: newTask.title,
-            notes: appendDurationTag(newTask.notes, newTask.durationMinutes),
-            category_id: newTask.categoryId,
-            scheduled_at: newTask.scheduledAt,
-            repeatable: newTask.repeatable,
-            done: newTask.done,
-            created_at: newTask.createdAt,
-          }));
-      }
-
-      if (error) {
-        console.error('Failed to save task to Supabase', error);
-      }
-      void refreshFromCloud(user.id);
-    })();
+    void setDoc(doc(db, 'users', user.id, 'tasks', newTask.id), newTask).catch((error) => {
+      console.error('Failed to save Firebase task', error);
+    });
   };
 
   const updateTask = (taskId: string, draft: TaskDraftInput) => {
-    if (!user) {
+    if (!user || !db) {
       return;
     }
 
@@ -486,51 +332,15 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       repeatable: draft.repeatable,
     };
 
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, ...nextTask } : task))
-    );
+    setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...nextTask } : task)));
 
-    if (!supabase) {
-      return;
-    }
-
-    void (async () => {
-      let { error } = await supabase
-        .from('tasks')
-        .update({
-          title: nextTask.title,
-          notes: nextTask.notes,
-          category_id: nextTask.categoryId,
-          scheduled_at: nextTask.scheduledAt,
-          duration_minutes: nextTask.durationMinutes,
-          repeatable: nextTask.repeatable,
-        })
-        .eq('user_id', user.id)
-        .eq('id', taskId);
-
-      if (error && isMissingDurationColumn(error)) {
-        ({ error } = await supabase
-          .from('tasks')
-          .update({
-            title: nextTask.title,
-            notes: appendDurationTag(nextTask.notes, nextTask.durationMinutes),
-            category_id: nextTask.categoryId,
-            scheduled_at: nextTask.scheduledAt,
-            repeatable: nextTask.repeatable,
-          })
-          .eq('user_id', user.id)
-          .eq('id', taskId));
-      }
-
-      if (error) {
-        console.error('Failed to update task in Supabase', error);
-      }
-      void refreshFromCloud(user.id);
-    })();
+    void updateDoc(doc(db, 'users', user.id, 'tasks', taskId), nextTask).catch((error) => {
+      console.error('Failed to update Firebase task', error);
+    });
   };
 
   const toggleTaskDone = (taskId: string) => {
-    if (!user) {
+    if (!user || !db) {
       return;
     }
 
@@ -540,26 +350,27 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     }
 
     const nextDone = !existing.done;
+    setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, done: nextDone } : task)));
 
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, done: nextDone } : task))
-    );
+    void updateDoc(doc(db, 'users', user.id, 'tasks', taskId), { done: nextDone }).catch((error) => {
+      console.error('Failed to toggle Firebase task', error);
+    });
+  };
 
-    if (!supabase) {
+  const deleteTask = (taskId: string) => {
+    if (!tasks.some((task) => task.id === taskId)) {
       return;
     }
 
-    void supabase
-      .from('tasks')
-      .update({ done: nextDone })
-      .eq('user_id', user.id)
-      .eq('id', taskId)
-      .then(({ error }) => {
-        if (error) {
-          console.error('Failed to toggle task in Supabase', error);
-        }
-        void refreshFromCloud(user.id);
-      });
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+
+    if (!user || !db) {
+      return;
+    }
+
+    void deleteDoc(doc(db, 'users', user.id, 'tasks', taskId)).catch((error) => {
+      console.error('Failed to delete Firebase task', error);
+    });
   };
 
   const calendarEvents = useMemo(() => {
@@ -594,6 +405,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     deleteCategory,
     addTask,
     updateTask,
+    deleteTask,
     toggleTaskDone,
   };
 

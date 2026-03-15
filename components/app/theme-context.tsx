@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { doc, setDoc } from 'firebase/firestore';
 
 import { useAuth } from './auth-context';
-import { supabase } from './supabase-client';
+import { db } from './firebase-client';
 
 export type AppTheme = {
   id: string;
@@ -112,11 +113,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const next = getThemeById(nextThemeId);
     setThemeId(next.id);
 
-    if (user && supabase) {
-      void supabase.auth.updateUser({
-        data: {
-          theme_id: next.id,
+    if (user && db) {
+      void setDoc(
+        doc(db, 'users', user.id),
+        {
+          themeId: next.id,
+          updatedAt: Date.now(),
         },
+        { merge: true }
+      ).catch((error) => {
+        console.error('Failed to update Firebase theme preference', error);
       });
     }
   }, [user]);

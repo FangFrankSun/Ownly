@@ -1,8 +1,11 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +14,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   formatTaskDateTime,
@@ -59,29 +64,30 @@ function hslToHex(hue: number, saturation: number, lightness: number) {
 
 const PALETTE_COLUMN_PROFILE: { hue: number; saturation: number; kind: 'color' | 'neutral' }[] = [
   { hue: 352, saturation: 90, kind: 'color' },
-  { hue: 334, saturation: 84, kind: 'color' },
-  { hue: 301, saturation: 60, kind: 'color' },
-  { hue: 272, saturation: 48, kind: 'color' },
-  { hue: 234, saturation: 42, kind: 'color' },
-  { hue: 206, saturation: 54, kind: 'color' },
-  { hue: 197, saturation: 60, kind: 'color' },
+  { hue: 320, saturation: 72, kind: 'color' },
+  { hue: 280, saturation: 56, kind: 'color' },
+  { hue: 236, saturation: 44, kind: 'color' },
+  { hue: 204, saturation: 58, kind: 'color' },
   { hue: 186, saturation: 64, kind: 'color' },
-  { hue: 174, saturation: 66, kind: 'color' },
-  { hue: 122, saturation: 42, kind: 'color' },
-  { hue: 94, saturation: 52, kind: 'color' },
-  { hue: 67, saturation: 64, kind: 'color' },
-  { hue: 53, saturation: 83, kind: 'color' },
-  { hue: 41, saturation: 88, kind: 'color' },
-  { hue: 30, saturation: 90, kind: 'color' },
-  { hue: 14, saturation: 86, kind: 'color' },
-  { hue: 18, saturation: 28, kind: 'neutral' },
-  { hue: 28, saturation: 10, kind: 'neutral' },
+  { hue: 162, saturation: 66, kind: 'color' },
+  { hue: 116, saturation: 46, kind: 'color' },
+  { hue: 82, saturation: 56, kind: 'color' },
+  { hue: 54, saturation: 76, kind: 'color' },
+  { hue: 35, saturation: 86, kind: 'color' },
+  { hue: 15, saturation: 86, kind: 'color' },
+  { hue: 4, saturation: 84, kind: 'color' },
+  { hue: 25, saturation: 14, kind: 'neutral' },
   { hue: 0, saturation: 0, kind: 'neutral' },
   { hue: 202, saturation: 24, kind: 'neutral' },
 ];
-const PALETTE_SHADE_LIGHTNESS = [88, 80, 72, 64, 57, 50, 43, 36, 29, 22];
+const PALETTE_SHADE_LIGHTNESS = [88, 78, 69, 60, 51, 43, 35, 27, 20];
 const PALETTE_COLUMNS = PALETTE_COLUMN_PROFILE.length;
 const PALETTE_ROWS = PALETTE_SHADE_LIGHTNESS.length;
+const PALETTE_SWATCH_SELECTED_RADIUS = 4;
+const PALETTE_SWATCH_OVERFLOW_GUTTER = 4;
+const PALETTE_SCALE_STAGE = 1.1;
+const PALETTE_SCALE_SELECTED = 1.2;
+const PALETTE_ANIMATION_STAGE_MS = 120;
 
 function buildSpectrumColors() {
   const colors: string[] = [];
@@ -169,13 +175,76 @@ function normalizeHexColor(value: string) {
   return candidate;
 }
 
+type PaletteSwatchProps = {
+  color: string;
+  selected: boolean;
+  size: number;
+  onPress: () => void;
+};
+
+function PaletteSwatch({ color, selected, size, onPress }: PaletteSwatchProps) {
+  const scale = useSharedValue(selected ? PALETTE_SCALE_SELECTED : 1);
+  const radius = useSharedValue(selected ? PALETTE_SWATCH_SELECTED_RADIUS : 0);
+  const lifted = useSharedValue(selected ? 1 : 0);
+
+  useEffect(() => {
+    if (selected) {
+      lifted.value = 1;
+      scale.value = withSequence(
+        withTiming(PALETTE_SCALE_STAGE, { duration: PALETTE_ANIMATION_STAGE_MS }),
+        withTiming(PALETTE_SCALE_SELECTED, { duration: PALETTE_ANIMATION_STAGE_MS })
+      );
+      radius.value = withSequence(
+        withTiming(0, { duration: PALETTE_ANIMATION_STAGE_MS }),
+        withTiming(PALETTE_SWATCH_SELECTED_RADIUS, { duration: PALETTE_ANIMATION_STAGE_MS })
+      );
+      return;
+    }
+
+    // Keep above siblings until the full return animation finishes.
+    lifted.value = 1;
+    scale.value = withSequence(
+      withTiming(PALETTE_SCALE_STAGE, { duration: PALETTE_ANIMATION_STAGE_MS }),
+      withTiming(1, { duration: PALETTE_ANIMATION_STAGE_MS })
+    );
+    radius.value = withTiming(0, { duration: PALETTE_ANIMATION_STAGE_MS });
+    lifted.value = withDelay(PALETTE_ANIMATION_STAGE_MS * 2, withTiming(0, { duration: 0 }));
+  }, [lifted, radius, scale, selected]);
+
+  const animatedPressStyle = useAnimatedStyle(() => ({
+    zIndex: lifted.value > 0 ? 240 : 1,
+    elevation: lifted.value > 0 ? 12 : 0,
+  }));
+
+  const animatedSwatchStyle = useAnimatedStyle(() => {
+    const scaledSize = size * scale.value;
+
+    return {
+      width: scaledSize,
+      height: scaledSize,
+      borderRadius: radius.value,
+    };
+  });
+
+  return (
+    <Animated.View style={[styles.paletteSwatchPress, { width: size, height: size }, animatedPressStyle]}>
+      <Pressable onPress={onPress} style={styles.paletteSwatchHitbox}>
+        <Animated.View style={[styles.paletteSwatch, { backgroundColor: color }, animatedSwatchStyle]} />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 export default function TaskEditorScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { theme } = useAppTheme();
   const { taskId } = useLocalSearchParams<{ taskId?: string }>();
-  const { tasks, categories, addTask, updateTask, addCategory, updateCategoryColor, deleteCategory } = useTasks();
+  const { tasks, categories, addTask, updateTask, deleteTask, addCategory, updateCategoryColor, deleteCategory } =
+    useTasks();
 
   const isEditing = typeof taskId === 'string' && taskId.length > 0;
+  const isPhoneLayout = Platform.OS !== 'web';
   const editingTask = useMemo(
     () => (isEditing ? tasks.find((task) => task.id === taskId) : undefined),
     [isEditing, taskId, tasks]
@@ -199,6 +268,11 @@ export default function TaskEditorScreen() {
   const [paletteColor, setPaletteColor] = useState(theme.primary);
   const [paletteHexInput, setPaletteHexInput] = useState(theme.primary);
   const [paletteError, setPaletteError] = useState('');
+  const [paletteGridWidth, setPaletteGridWidth] = useState(0);
+  const [selectedPaletteIndex, setSelectedPaletteIndex] = useState<number | null>(() => {
+    const index = SPECTRUM_COLORS.indexOf(theme.primary);
+    return index >= 0 ? index : null;
+  });
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerDate, setPickerDate] = useState(new Date(initialSchedule));
@@ -209,9 +283,17 @@ export default function TaskEditorScreen() {
   );
   const [durationInput, setDurationInput] = useState(String(editingTask?.durationMinutes ?? 60));
   const [pickerError, setPickerError] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
   const timeOptions = useMemo(() => buildTimeOptions(), []);
+  const paletteSwatchSize = useMemo(() => {
+    if (paletteGridWidth <= 0) {
+      return 18;
+    }
+    return Math.max(14, Math.floor(paletteGridWidth / PALETTE_COLUMNS));
+  }, [paletteGridWidth]);
+  const paletteGridInnerWidth = paletteSwatchSize * PALETTE_COLUMNS;
 
   const openPicker = () => {
     const current = isValidIsoDate(scheduledAt) ? new Date(scheduledAt) : new Date();
@@ -310,9 +392,11 @@ export default function TaskEditorScreen() {
   };
 
   const openCategoryColorPicker = (categoryIdToEdit: string, currentColor: string) => {
+    const paletteIndex = SPECTRUM_COLORS.indexOf(currentColor);
     setEditingCategoryId(categoryIdToEdit);
     setPaletteColor(currentColor);
     setPaletteHexInput(currentColor);
+    setSelectedPaletteIndex(paletteIndex >= 0 ? paletteIndex : null);
     setPaletteError('');
     setColorPaletteOpen(true);
   };
@@ -338,312 +422,417 @@ export default function TaskEditorScreen() {
     updateCategoryColor(editingCategoryId, normalized);
     closeCategoryColorPicker();
   };
+  const handleDeleteTask = () => {
+    if (!editingTask) {
+      return;
+    }
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDeleteTask = () => {
+    if (!editingTask) {
+      setDeleteConfirmOpen(false);
+      return;
+    }
+    deleteTask(editingTask.id);
+    setDeleteConfirmOpen(false);
+    router.back();
+  };
 
   return (
     <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.topRow}>
-          <Pressable onPress={() => router.back()} style={styles.iconButton}>
-            <MaterialIcons color="#4A5576" name="close" size={22} />
-          </Pressable>
-          <View style={styles.headerCopy}>
-            <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Create Task'}</Text>
-            <Text style={styles.headerSubtitle}>Keep details clear so your calendar stays focused.</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}
+        style={styles.editorKeyboardAvoiding}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: Math.max(40, insets.top + 16),
+              paddingBottom: Math.max(42, insets.bottom + (isPhoneLayout ? 32 : 8)),
+            },
+          ]}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={Keyboard.dismiss}
+          showsVerticalScrollIndicator={false}>
+          <View style={styles.topRow}>
+            <Pressable onPress={() => router.back()} style={styles.iconButton}>
+              <MaterialIcons color="#4A5576" name="close" size={22} />
+            </Pressable>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Create Task'}</Text>
+              <Text style={styles.headerSubtitle}>Keep details clear so your calendar stays focused.</Text>
+            </View>
+            {editingTask ? (
+              <Pressable onPress={handleDeleteTask} style={styles.deleteTopButton}>
+                <MaterialIcons color="#C7364A" name="delete-outline" size={19} />
+              </Pressable>
+            ) : (
+              <View style={styles.headerSpacer} />
+            )}
           </View>
-          <View style={styles.headerSpacer} />
-        </View>
 
-        <View style={styles.card}>
-          <View style={styles.sectionHeadingRow}>
-            <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
-              <MaterialIcons color={theme.primary} name="edit-note" size={16} />
+          <View style={styles.card}>
+            <View style={styles.sectionHeadingRow}>
+              <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
+                <MaterialIcons color={theme.primary} name="edit-note" size={16} />
+              </View>
+              <Text style={styles.sectionTitle}>Task Details</Text>
             </View>
-            <Text style={styles.sectionTitle}>Task Details</Text>
-          </View>
-          <Text style={styles.inputLabel}>Title</Text>
-          <TextInput
-            onChangeText={setTitle}
-            placeholder="Title"
-            placeholderTextColor="#8E96AC"
-            style={styles.input}
-            value={title}
-          />
-          <Text style={styles.inputLabel}>Notes</Text>
-          <TextInput
-            multiline
-            onChangeText={setNotes}
-            placeholder="Notes"
-            placeholderTextColor="#8E96AC"
-            style={[styles.input, styles.notesInput]}
-            value={notes}
-          />
-          <Text style={styles.inputLabel}>Date & Duration</Text>
-          <Pressable onPress={openPicker} style={styles.pickerButton}>
-            <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
-              <MaterialIcons color={theme.primary} name="event" size={17} />
-            </View>
-            <View style={styles.pickerTextBlock}>
-              <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
-              <Text style={styles.pickerSubtext}>{durationMinutes} min</Text>
-            </View>
-            <MaterialIcons color="#6A7798" name="chevron-right" size={20} />
-          </Pressable>
-          <View style={styles.repeatRow}>
-            <View style={styles.repeatTextBlock}>
-              <Text style={styles.repeatLabel}>Repeat task</Text>
-              <Text style={styles.repeatSubtext}>Automatically keep this on your schedule.</Text>
-            </View>
-            <Switch
-              ios_backgroundColor="#CCD3E3"
-              onValueChange={setRepeatable}
-              thumbColor={repeatable ? theme.primary : '#F3F5FB'}
-              trackColor={{ false: '#CCD3E3', true: `${theme.primary}66` }}
-              value={repeatable}
+            <Text style={styles.inputLabel}>Title</Text>
+            <TextInput
+              onChangeText={setTitle}
+              placeholder="Title"
+              placeholderTextColor="#8E96AC"
+              style={styles.input}
+              value={title}
             />
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.sectionHeadingRow}>
-            <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
-              <MaterialIcons color={theme.primary} name="category" size={16} />
+            <Text style={styles.inputLabel}>Notes</Text>
+            <TextInput
+              multiline
+              onChangeText={setNotes}
+              placeholder="Notes"
+              placeholderTextColor="#8E96AC"
+              style={[styles.input, styles.notesInput]}
+              value={notes}
+            />
+            <Text style={styles.inputLabel}>Date & Duration</Text>
+            <Pressable onPress={openPicker} style={styles.pickerButton}>
+              <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
+                <MaterialIcons color={theme.primary} name="event" size={17} />
+              </View>
+              <View style={styles.pickerTextBlock}>
+                <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
+                <Text style={styles.pickerSubtext}>{durationMinutes} min</Text>
+              </View>
+              <MaterialIcons color="#6A7798" name="chevron-right" size={20} />
+            </Pressable>
+            <View style={styles.repeatRow}>
+              <View style={styles.repeatTextBlock}>
+                <Text style={styles.repeatLabel}>Repeat task</Text>
+                <Text style={styles.repeatSubtext}>Automatically keep this on your schedule.</Text>
+              </View>
+              <Switch
+                ios_backgroundColor="#CCD3E3"
+                onValueChange={setRepeatable}
+                thumbColor={repeatable ? theme.primary : '#F3F5FB'}
+                trackColor={{ false: '#CCD3E3', true: `${theme.primary}66` }}
+                value={repeatable}
+              />
             </View>
-            <Text style={styles.sectionTitle}>Categories</Text>
-            <View style={styles.sectionHeadingSpacer} />
-            <Pressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
-              <Text style={styles.smallButtonText}>{categoryEditMode ? 'Done' : 'Edit'}</Text>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.sectionHeadingRow}>
+              <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
+                <MaterialIcons color={theme.primary} name="category" size={16} />
+              </View>
+              <Text style={styles.sectionTitle}>Categories</Text>
+              <View style={styles.sectionHeadingSpacer} />
+              <Pressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
+                <Text style={styles.smallButtonText}>{categoryEditMode ? 'Done' : 'Edit'}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.categoryList}>
+              {categories.map((category) => {
+                const selected = category.id === categoryId;
+
+                return (
+                  <View key={category.id} style={styles.categoryRow}>
+                    <Pressable
+                      onPress={() => setCategoryId(category.id)}
+                      style={[
+                        styles.categoryChip,
+                        selected && {
+                          borderColor: category.color,
+                          backgroundColor: `${category.color}14`,
+                        },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          selected && {
+                            color: category.color,
+                          },
+                        ]}>
+                        {category.name}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => openCategoryColorPicker(category.id, category.color)}
+                      style={styles.categoryColorButton}>
+                      <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
+                    </Pressable>
+                    {categoryEditMode ? (
+                      <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
+                        <MaterialIcons color="#C7364A" name="delete-outline" size={18} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+
+            <Text style={styles.inputLabel}>New Category</Text>
+            <TextInput
+              onChangeText={setNewCategoryName}
+              placeholder="New category name"
+              placeholderTextColor="#8E96AC"
+              style={styles.input}
+              value={newCategoryName}
+            />
+            <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Add Category</Text>
             </Pressable>
           </View>
-          <View style={styles.categoryList}>
-            {categories.map((category) => {
-              const selected = category.id === categoryId;
 
-              return (
-                <View key={category.id} style={styles.categoryRow}>
-                  <Pressable
-                    onPress={() => setCategoryId(category.id)}
-                    style={[
-                      styles.categoryChip,
-                      { borderColor: category.color },
-                      selected && { backgroundColor: category.color },
-                    ]}>
-                    <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>
-                      {category.name}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => openCategoryColorPicker(category.id, category.color)}
-                    style={styles.categoryColorButton}>
-                    <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
-                    <MaterialIcons color="#516184" name="palette" size={15} />
-                  </Pressable>
-                  {categoryEditMode ? (
-                    <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
-                      <MaterialIcons color="#C7364A" name="delete-outline" size={18} />
-                    </Pressable>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-
-          <Text style={styles.inputLabel}>New Category</Text>
-          <TextInput
-            onChangeText={setNewCategoryName}
-            placeholder="New category name"
-            placeholderTextColor="#8E96AC"
-            style={styles.input}
-            value={newCategoryName}
-          />
-          <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Add Category</Text>
+          <Pressable
+            onPress={handleSave}
+            style={[styles.primaryButton, { backgroundColor: theme.primary, borderColor: `${theme.primary}99` }]}>
+            <Text style={styles.primaryButtonText}>{editingTask ? 'Save Changes' : 'Create Task'}</Text>
           </Pressable>
-        </View>
-
-        <Pressable
-          onPress={handleSave}
-          style={[styles.primaryButton, { backgroundColor: theme.primary, borderColor: `${theme.primary}99` }]}>
-          <Text style={styles.primaryButtonText}>{editingTask ? 'Save Changes' : 'Create Task'}</Text>
-        </Pressable>
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </ScrollView>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal animationType="fade" transparent visible={pickerOpen}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Choose Date & Time</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStrip}>
-              {dateOptions.map((dateOption) => {
-                const selected = dateOption.toDateString() === pickerDate.toDateString();
-                return (
-                  <Pressable
-                    key={dateOption.toISOString()}
-                    onPress={() => setPickerDate(dateOption)}
-                    style={[
-                      styles.datePill,
-                      selected && styles.datePillActive,
-                      selected && { backgroundColor: theme.primary },
-                    ]}>
-                    <Text style={[styles.datePillWeekday, selected && styles.datePillTextActive]}>
-                      {dateOption.toLocaleDateString(undefined, { weekday: 'short' })}
-                    </Text>
-                    <Text style={[styles.datePillDay, selected && styles.datePillTextActive]}>
-                      {dateOption.getDate()}
-                    </Text>
+        <View style={[styles.modalBackdrop, isPhoneLayout && styles.modalBackdropMobile]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 10 : 0}
+            style={[styles.modalKeyboardAvoiding, isPhoneLayout && styles.modalKeyboardAvoidingMobile]}>
+            <View style={[styles.modalCard, isPhoneLayout && styles.modalCardMobile]}>
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.modalCardScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.modalCardScroll}>
+                {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
+                <Text style={styles.modalTitle}>Choose Date & Time</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStrip}>
+                  {dateOptions.map((dateOption) => {
+                    const selected = dateOption.toDateString() === pickerDate.toDateString();
+                    return (
+                      <Pressable
+                        key={dateOption.toISOString()}
+                        onPress={() => setPickerDate(dateOption)}
+                        style={[
+                          styles.datePill,
+                          selected && styles.datePillActive,
+                          selected && { backgroundColor: theme.primary },
+                        ]}>
+                        <Text style={[styles.datePillWeekday, selected && styles.datePillTextActive]}>
+                          {dateOption.toLocaleDateString(undefined, { weekday: 'short' })}
+                        </Text>
+                        <Text style={[styles.datePillDay, selected && styles.datePillTextActive]}>
+                          {dateOption.getDate()}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                <ScrollView style={styles.timeGrid} contentContainerStyle={styles.timeGridContent}>
+                  {timeOptions.map((option) => {
+                    const selected = option.hour === pickerHour && option.minute === pickerMinute;
+
+                    return (
+                      <Pressable
+                        key={option.key}
+                        onPress={() => {
+                          setPickerHour(option.hour);
+                          setPickerMinute(option.minute);
+                          setManualTime(formatManualTime(option.hour, option.minute));
+                          setPickerError('');
+                        }}
+                        style={[
+                          styles.timeOption,
+                          selected && styles.timeOptionActive,
+                          selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}1F` },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.timeOptionText,
+                            selected && styles.timeOptionTextActive,
+                            selected && { color: theme.primary },
+                          ]}>
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                <View style={styles.manualTimeRow}>
+                  <Text style={styles.manualTimeLabel}>Exact time</Text>
+                  <TextInput
+                    onChangeText={setManualTime}
+                    value={manualTime}
+                    placeholder="1:42"
+                    placeholderTextColor="#8E96AC"
+                    style={styles.manualTimeInput}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+
+                <View style={styles.manualTimeRow}>
+                  <Text style={styles.manualTimeLabel}>Duration (min)</Text>
+                  <TextInput
+                    onChangeText={setDurationInput}
+                    value={durationInput}
+                    placeholder="60"
+                    placeholderTextColor="#8E96AC"
+                    style={styles.durationInput}
+                    keyboardType="number-pad"
+                  />
+                </View>
+
+                <View style={styles.durationPresetRow}>
+                  {DURATION_PRESETS.map((value) => {
+                    const selected = durationInput.trim() === String(value);
+                    return (
+                      <Pressable
+                        key={value}
+                        onPress={() => setDurationInput(String(value))}
+                        style={[
+                          styles.durationPill,
+                          selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}18` },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.durationPillText,
+                            selected && { color: theme.primary },
+                          ]}>
+                          {value}m
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {pickerError ? <Text style={styles.pickerErrorText}>{pickerError}</Text> : null}
+
+                <View style={styles.modalActions}>
+                  <Pressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
                   </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <ScrollView style={styles.timeGrid} contentContainerStyle={styles.timeGridContent}>
-              {timeOptions.map((option) => {
-                const selected = option.hour === pickerHour && option.minute === pickerMinute;
-
-                return (
                   <Pressable
-                    key={option.key}
-                    onPress={() => {
-                      setPickerHour(option.hour);
-                      setPickerMinute(option.minute);
-                      setManualTime(formatManualTime(option.hour, option.minute));
-                      setPickerError('');
-                    }}
-                    style={[
-                      styles.timeOption,
-                      selected && styles.timeOptionActive,
-                      selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}1F` },
-                    ]}>
-                    <Text
-                      style={[
-                        styles.timeOptionText,
-                        selected && styles.timeOptionTextActive,
-                        selected && { color: theme.primary },
-                      ]}>
-                      {option.label}
-                    </Text>
+                    onPress={applyPicker}
+                    style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.primaryButtonText}>Apply</Text>
                   </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.manualTimeRow}>
-              <Text style={styles.manualTimeLabel}>Exact time</Text>
-              <TextInput
-                onChangeText={setManualTime}
-                value={manualTime}
-                placeholder="1:42"
-                placeholderTextColor="#8E96AC"
-                style={styles.manualTimeInput}
-                keyboardType="numbers-and-punctuation"
-              />
+                </View>
+              </ScrollView>
             </View>
-
-            <View style={styles.manualTimeRow}>
-              <Text style={styles.manualTimeLabel}>Duration (min)</Text>
-              <TextInput
-                onChangeText={setDurationInput}
-                value={durationInput}
-                placeholder="60"
-                placeholderTextColor="#8E96AC"
-                style={styles.durationInput}
-                keyboardType="number-pad"
-              />
-            </View>
-
-            <View style={styles.durationPresetRow}>
-              {DURATION_PRESETS.map((value) => {
-                const selected = durationInput.trim() === String(value);
-                return (
-                  <Pressable
-                    key={value}
-                    onPress={() => setDurationInput(String(value))}
-                    style={[
-                      styles.durationPill,
-                      selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}18` },
-                    ]}>
-                    <Text
-                      style={[
-                        styles.durationPillText,
-                        selected && { color: theme.primary },
-                      ]}>
-                      {value}m
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {pickerError ? <Text style={styles.pickerErrorText}>{pickerError}</Text> : null}
-
-            <View style={styles.modalActions}>
-              <Pressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable onPress={applyPicker} style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
-                <Text style={styles.primaryButtonText}>Apply</Text>
-              </Pressable>
-            </View>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
       <Modal animationType="fade" transparent visible={colorPaletteOpen}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.paletteModalCard}>
-            <View style={styles.paletteModalHeader}>
-              <Text style={styles.modalTitle}>Choose Category Color</Text>
-              <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
-                <MaterialIcons color="#5B6581" name="close" size={20} />
-              </Pressable>
-            </View>
+        <View style={[styles.modalBackdrop, isPhoneLayout && styles.modalBackdropMobile]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 10 : 0}
+            style={[styles.paletteKeyboardAvoiding, isPhoneLayout && styles.modalKeyboardAvoidingMobile]}>
+            <View style={[styles.paletteModalCard, isPhoneLayout && styles.paletteModalCardMobile]}>
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.paletteModalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.paletteModalScroll}>
+                {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
+                <View style={styles.paletteModalHeader}>
+                  <Text style={styles.modalTitle}>Choose Category Color</Text>
+                  <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
+                    <MaterialIcons color="#5B6581" name="close" size={20} />
+                  </Pressable>
+                </View>
 
-            <View style={styles.paletteGrid}>
-              {SPECTRUM_COLORS.map((color, index) => {
-                const selected = color === paletteColor;
-
-                return (
-                  <Pressable
-                    key={`${color}-${index}`}
-                    onPress={() => {
-                      setPaletteColor(color);
-                      setPaletteHexInput(color);
-                      setPaletteError('');
-                    }}
-                    style={[
-                      styles.paletteSwatch,
-                      { backgroundColor: color },
-                      selected && styles.paletteSwatchSelected,
-                      selected && { borderColor: theme.secondary },
-                    ]}
-                  />
-                );
-              })}
-            </View>
-            {paletteError ? <Text style={styles.pickerErrorText}>{paletteError}</Text> : null}
-
-            <View style={styles.paletteFooter}>
-              <View style={styles.paletteValuePill}>
                 <View
-                  style={[
-                    styles.customColorPreview,
-                    { backgroundColor: normalizeHexColor(paletteHexInput) ?? paletteColor },
-                  ]}
-                />
-                <TextInput
-                  onChangeText={(value) => {
-                    setPaletteHexInput(value);
-                    setPaletteError('');
+                  onLayout={(event) => {
+                    setPaletteGridWidth(event.nativeEvent.layout.width);
                   }}
-                  value={paletteHexInput}
-                  placeholder="#4C6FFF"
-                  placeholderTextColor="#8E96AC"
-                  style={styles.paletteFooterInput}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <Pressable
-                onPress={handleSaveCategoryColor}
-                style={[styles.paletteApplyButton, { backgroundColor: theme.primary }]}>
-                <Text style={styles.primaryButtonText}>Apply</Text>
+                  style={styles.paletteGrid}>
+                  <View
+                    style={[
+                      styles.paletteGridInner,
+                      { width: paletteGridInnerWidth + PALETTE_SWATCH_OVERFLOW_GUTTER * 2 },
+                    ]}>
+                    <View style={styles.paletteGridWrap}>
+                      {SPECTRUM_COLORS.map((color, swatchIndex) => {
+                        const selected = swatchIndex === selectedPaletteIndex;
+                        return (
+                          <PaletteSwatch
+                            key={`${color}-${swatchIndex}`}
+                            color={color}
+                            selected={selected}
+                            size={paletteSwatchSize}
+                            onPress={() => {
+                              setSelectedPaletteIndex(swatchIndex);
+                              setPaletteColor(color);
+                              setPaletteHexInput(color);
+                              setPaletteError('');
+                            }}
+                          />
+                        );
+                      })}
+                    </View>
+                  </View>
+                </View>
+                {paletteError ? <Text style={styles.pickerErrorText}>{paletteError}</Text> : null}
+
+                <View style={styles.paletteFooter}>
+                  <View style={styles.paletteValuePill}>
+                    <View
+                      style={[
+                        styles.customColorPreview,
+                        { backgroundColor: normalizeHexColor(paletteHexInput) ?? paletteColor },
+                      ]}
+                    />
+                    <TextInput
+                      onChangeText={(value) => {
+                        setSelectedPaletteIndex(null);
+                        setPaletteHexInput(value);
+                        setPaletteError('');
+                      }}
+                      value={paletteHexInput}
+                      placeholder="#4C6FFF"
+                      placeholderTextColor="#8E96AC"
+                      style={styles.paletteFooterInput}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                  <Pressable
+                    onPress={handleSaveCategoryColor}
+                    style={[styles.paletteApplyButton, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.primaryButtonText}>Apply</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal animationType="fade" transparent visible={deleteConfirmOpen}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.deleteConfirmCard}>
+            <View style={styles.deleteConfirmIconWrap}>
+              <MaterialIcons color="#CB3750" name="delete-outline" size={20} />
+            </View>
+            <Text style={styles.deleteConfirmTitle}>Delete task?</Text>
+            <Text style={styles.deleteConfirmDescription}>
+              This event will be removed from your schedule and cannot be undone.
+            </Text>
+            <View style={styles.deleteConfirmActions}>
+              <Pressable onPress={() => setDeleteConfirmOpen(false)} style={styles.deleteCancelButton}>
+                <Text style={styles.deleteCancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable onPress={confirmDeleteTask} style={styles.deleteConfirmButton}>
+                <Text style={styles.deleteConfirmButtonText}>Delete</Text>
               </Pressable>
             </View>
           </View>
@@ -657,6 +846,9 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: '#F2F5FC',
+  },
+  editorKeyboardAvoiding: {
+    flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 18,
@@ -698,6 +890,16 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 36,
     height: 36,
+  },
+  deleteTopButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF3F5',
+    borderWidth: 1,
+    borderColor: '#F3C7CE',
   },
   card: {
     borderRadius: 22,
@@ -836,9 +1038,10 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1.3,
     borderRadius: 999,
+    borderColor: '#CFD8EA',
     paddingHorizontal: 12,
     paddingVertical: 9,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FDFEFF',
   },
   categoryChipText: {
     fontSize: 13,
@@ -846,11 +1049,8 @@ const styles = StyleSheet.create({
     color: '#2B3554',
     textAlign: 'center',
   },
-  categoryChipTextSelected: {
-    color: '#FFFFFF',
-  },
   categoryColorButton: {
-    width: 44,
+    width: 38,
     height: 36,
     borderRadius: 10,
     borderWidth: 1,
@@ -858,11 +1058,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7FAFF',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 1,
   },
   categoryColorDot: {
-    width: 14,
-    height: 14,
+    width: 18,
+    height: 18,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.12)',
@@ -939,6 +1138,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 14,
   },
+  modalBackdropMobile: {
+    justifyContent: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  modalKeyboardAvoiding: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalKeyboardAvoidingMobile: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
   modalCard: {
     width: '100%',
     maxWidth: 520,
@@ -946,6 +1158,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 16,
     gap: 12,
+  },
+  modalCardMobile: {
+    maxWidth: 680,
+    maxHeight: '86%',
+    borderRadius: 24,
+  },
+  modalCardScroll: {
+    width: '100%',
+  },
+  modalCardScrollContent: {
+    gap: 12,
+    paddingBottom: 4,
+  },
+  sheetGrabber: {
+    alignSelf: 'center',
+    width: 64,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: '#D2D9E8',
+    marginBottom: 4,
   },
   modalTitle: {
     fontSize: 18,
@@ -1087,6 +1319,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E4EBF8',
   },
+  paletteModalCardMobile: {
+    width: '100%',
+    maxWidth: 680,
+    maxHeight: '88%',
+    borderRadius: 24,
+  },
+  paletteKeyboardAvoiding: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paletteModalScroll: {
+    width: '100%',
+  },
+  paletteModalScrollContent: {
+    gap: 10,
+    paddingBottom: 4,
+  },
   paletteModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1102,23 +1353,48 @@ const styles = StyleSheet.create({
   },
   paletteGrid: {
     width: '100%',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    borderRadius: 8,
-    overflow: 'hidden',
+    alignItems: 'center',
+    borderRadius: 0,
+    overflow: 'visible',
     borderWidth: 0,
     backgroundColor: '#FFFFFF',
     marginTop: 2,
   },
+  paletteGridInner: {
+    position: 'relative',
+    padding: PALETTE_SWATCH_OVERFLOW_GUTTER,
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+    overflow: 'visible',
+  },
+  paletteGridWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    overflow: 'visible',
+  },
+  paletteSwatchPress: {
+    position: 'relative',
+    overflow: 'visible',
+    zIndex: 1,
+    borderRadius: 0,
+  },
+  paletteSwatchHitbox: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+    borderRadius: 0,
+  },
   paletteSwatch: {
-    width: `${100 / PALETTE_COLUMNS}%`,
-    aspectRatio: 1,
+    position: 'relative',
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 0,
     borderWidth: 0,
-  },
-  paletteSwatchSelected: {
-    borderWidth: 2,
-    borderColor: '#1F2A44',
+    overflow: 'visible',
   },
   paletteFooter: {
     flexDirection: 'row',
@@ -1150,5 +1426,76 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  deleteConfirmCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E8D6DB',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    gap: 10,
+    alignItems: 'center',
+  },
+  deleteConfirmIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF2F5',
+    borderWidth: 1,
+    borderColor: '#F7CFD7',
+  },
+  deleteConfirmTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#1A2133',
+  },
+  deleteConfirmDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    color: '#5D6886',
+    fontWeight: '600',
+    maxWidth: 340,
+  },
+  deleteConfirmActions: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  deleteCancelButton: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6DEEE',
+    backgroundColor: '#F7FAFF',
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteCancelButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#48557A',
+  },
+  deleteConfirmButton: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D44A62',
+    backgroundColor: '#D94F68',
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteConfirmButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });
