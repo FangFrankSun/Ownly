@@ -1,4 +1,3 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -25,6 +24,7 @@ import Animated, {
 import { AppCard, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
+import { AppIcon } from '@/components/ui/app-icon';
 
 type ViewMode = 'list' | 'year' | 'month' | 'week' | 'threeDay' | 'day';
 type WeekDay = {
@@ -800,7 +800,7 @@ export default function CalendarScreen() {
         </Text>
         {event.notes ? <Text style={styles.eventNotes}>{event.notes}</Text> : null}
       </View>
-      {event.repeatable ? <MaterialIcons color="#5D6A89" name="repeat" size={16} /> : null}
+      {event.repeatable ? <AppIcon color="#5D6A89" name="repeat" size={16} /> : null}
     </Pressable>
   );
   const activeModeItem = VIEW_MODE_ITEMS.find((item) => item.mode === viewMode) ?? VIEW_MODE_ITEMS[0];
@@ -816,7 +816,7 @@ export default function CalendarScreen() {
                 <Text style={[styles.modeTriggerText, { color: theme.secondary }]}>
                   {activeModeItem.label}
                 </Text>
-                <MaterialIcons color={theme.secondary} name="keyboard-arrow-right" size={20} />
+                <AppIcon color={theme.secondary} name="keyboard-arrow-right" size={20} />
               </Pressable>
 
               {isModeMenuOpen ? (
@@ -862,7 +862,7 @@ export default function CalendarScreen() {
 
           <View style={styles.periodNavRow}>
             <Pressable onPress={() => shiftPeriod(-1)} style={styles.navButton}>
-              <MaterialIcons color={theme.secondary} name="chevron-left" size={22} />
+              <AppIcon color={theme.secondary} name="chevron-left" size={22} />
             </Pressable>
 
             <Text numberOfLines={1} style={styles.periodText}>
@@ -870,7 +870,7 @@ export default function CalendarScreen() {
             </Text>
 
             <Pressable onPress={() => shiftPeriod(1)} style={styles.navButton}>
-              <MaterialIcons color={theme.secondary} name="chevron-right" size={22} />
+              <AppIcon color={theme.secondary} name="chevron-right" size={22} />
             </Pressable>
           </View>
         </View>
@@ -1202,7 +1202,7 @@ export default function CalendarScreen() {
                 <Text style={[styles.completedEventsToggleText, { color: theme.primary }]}>
                   {showCompletedEvents ? 'Hide' : 'Show All'} ({completedPeriodEvents.length})
                 </Text>
-                <MaterialIcons
+                <AppIcon
                   color={theme.primary}
                   name={showCompletedEvents ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
                   size={18}
@@ -1256,13 +1256,13 @@ export default function CalendarScreen() {
                 </View>
               </View>
               <Pressable onPress={() => setSelectedEvent(null)} style={styles.detailClose}>
-                <MaterialIcons color="#5E6883" name="close" size={18} />
+                <AppIcon color="#5E6883" name="close" size={18} />
               </Pressable>
             </View>
 
             <View style={styles.detailInfoCard}>
               <View style={styles.detailInfoRow}>
-                <MaterialIcons color="#667291" name="schedule" size={16} />
+                <AppIcon color="#667291" name="schedule" size={16} />
                 <Text style={styles.detailInfoText}>
                   {selectedEvent
                     ? formatEventDateTimeRange(selectedEvent.scheduledAt, selectedEvent.durationMinutes)
@@ -1270,7 +1270,7 @@ export default function CalendarScreen() {
                 </Text>
               </View>
               <View style={styles.detailInfoRow}>
-                <MaterialIcons color="#667291" name="timelapse" size={16} />
+                <AppIcon color="#667291" name="timelapse" size={16} />
                 <Text style={styles.detailInfoText}>
                   {selectedEvent ? formatDurationLabel(selectedEvent.durationMinutes) : ''}
                 </Text>
@@ -1291,7 +1291,7 @@ export default function CalendarScreen() {
               <Pressable
                 onPress={handleEditSelectedEvent}
                 style={[styles.detailActionPrimary, { backgroundColor: theme.primary }]}>
-                <MaterialIcons color="#FFFFFF" name="edit" size={16} />
+                <AppIcon color="#FFFFFF" name="edit" size={16} />
                 <Text style={styles.detailActionPrimaryText}>Edit Event</Text>
               </Pressable>
             </View>

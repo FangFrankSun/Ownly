@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Platform } from 'react-native';
 import {
+  FacebookAuthProvider,
   GoogleAuthProvider,
   OAuthProvider,
   createUserWithEmailAndPassword,
@@ -22,7 +23,8 @@ type AuthUser = {
   themeId: string | null;
 };
 
-type OAuthProviderId = 'google' | 'apple' | 'azure';
+type OAuthProviderId = 'google' | 'facebook' | 'apple' | 'azure';
+type OAuthTokenProviderId = 'google.com' | 'facebook.com' | 'apple.com' | 'microsoft.com';
 
 type AuthSuccess = {
   ok: true;
@@ -39,11 +41,20 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isHydrated: boolean;
   signIn: (email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
+  signInWithOAuthTokens: (
+    providerId: OAuthTokenProviderId,
+    idToken?: string,
+    accessToken?: string,
+    rawNonce?: string,
+    displayName?: string
+  ) => Promise<AuthSuccess | AuthFailure>;
   signInWithGoogleIdToken: (idToken?: string, accessToken?: string) => Promise<AuthSuccess | AuthFailure>;
   signInWithProvider: (provider: OAuthProviderId) => Promise<AuthSuccess | AuthFailure>;
   signUp: (name: string, email: string, password: string) => Promise<AuthSuccess | AuthFailure>;
   signOut: () => Promise<void>;
 };
+
+const microsoftTenantId = process.env.EXPO_PUBLIC_MICROSOFT_TENANT_ID?.trim() || 'common';
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -79,16 +90,22 @@ function mapFirebaseAuthError(error: unknown) {
       return 'Password is too weak.';
     case 'auth/popup-closed-by-user':
       return 'Sign-in popup was closed.';
+    case 'auth/cancelled-popup-request':
+      return 'Another sign-in popup replaced the previous one. Continue with the newest window.';
     case 'auth/popup-blocked':
       return 'Popup was blocked. Allow popups and try again.';
     case 'auth/operation-not-allowed':
       return 'This sign-in method is not enabled in Firebase Auth.';
+    case 'auth/account-exists-with-different-credential':
+      return 'This email is already linked to a different sign-in method.';
     case 'auth/invalid-continue-uri':
     case 'auth/unauthorized-domain':
     case 'auth/auth-domain-config-required':
       return webAuthSupport.isSupported
         ? 'Firebase web sign-in needs a valid auth domain and authorized web origin.'
         : webAuthSupport.message;
+    case 'auth/missing-or-invalid-nonce':
+      return 'Apple sign-in could not verify the request. Try again after rebuilding the iOS app.';
     default:
       return message || 'Authentication failed. Please try again.';
   }
@@ -120,6 +137,28 @@ async function syncSignedInUserProfile(firebaseUser: {
     },
     { merge: true }
   );
+}
+
+function buildOAuthCredential(
+  providerId: OAuthTokenProviderId,
+  idToken?: string,
+  accessToken?: string,
+  rawNonce?: string
+) {
+  if (providerId === 'google.com') {
+    return GoogleAuthProvider.credential(idToken || null, accessToken);
+  }
+
+  if (providerId === 'facebook.com') {
+    return FacebookAuthProvider.credential(accessToken || '');
+  }
+
+  const provider = new OAuthProvider(providerId);
+  return provider.credential({
+    idToken,
+    accessToken,
+    rawNonce,
+  });
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -220,7 +259,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signInWithGoogleIdToken: AuthContextValue['signInWithGoogleIdToken'] = async (idToken, accessToken) => {
+  const signInWithOAuthTokens: AuthContextValue['signInWithOAuthTokens'] = async (
+    providerId,
+    idToken,
+    accessToken,
+    rawNonce,
+    displayName
+  ) => {
     const configError = ensureFirebaseConfigured();
     if (configError) {
       return configError;
@@ -228,16 +273,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const normalizedIdToken = idToken?.trim() ?? '';
     const normalizedAccessToken = accessToken?.trim() || undefined;
-    if (!normalizedIdToken) {
+    const normalizedRawNonce = rawNonce?.trim() || undefined;
+    const requiresIdToken = providerId !== 'facebook.com';
+
+    if ((requiresIdToken && !normalizedIdToken) || (!requiresIdToken && !normalizedAccessToken)) {
+      const providerName =
+        providerId === 'google.com'
+          ? 'Google'
+          : providerId === 'facebook.com'
+            ? 'Facebook'
+            : providerId === 'apple.com'
+              ? 'Apple'
+              : 'Microsoft';
       return {
         ok: false,
-        error: 'Google sign-in did not return an ID token.',
+        error: providerId === 'facebook.com'
+          ? `${providerName} sign-in did not return an access token.`
+          : `${providerName} sign-in did not return an ID token.`,
       };
     }
 
     try {
-      const credential = GoogleAuthProvider.credential(normalizedIdToken, normalizedAccessToken);
+      const credential = buildOAuthCredential(providerId, normalizedIdToken, normalizedAccessToken, normalizedRawNonce);
       const result = await signInWithCredential(auth!, credential);
+
+      const normalizedDisplayName = displayName?.trim();
+      if (providerId === 'apple.com' && normalizedDisplayName && !result.user.displayName) {
+        await updateProfile(result.user, { displayName: normalizedDisplayName });
+      }
 
       await syncSignedInUserProfile(result.user);
 
@@ -246,6 +309,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: mapFirebaseAuthError(error) };
     }
   };
+
+  const signInWithGoogleIdToken: AuthContextValue['signInWithGoogleIdToken'] = async (idToken, accessToken) =>
+    signInWithOAuthTokens('google.com', idToken, accessToken);
 
   const signInWithProvider: AuthContextValue['signInWithProvider'] = async (provider) => {
     const configError = ensureFirebaseConfigured();
@@ -256,7 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (Platform.OS !== 'web') {
       return {
         ok: false,
-        error: 'Google/Apple/Microsoft login is enabled on web. Use email login on mobile for now.',
+        error: 'Google/Facebook/Apple/Microsoft login is enabled on web. Use the native social buttons on mobile.',
       };
     }
 
@@ -279,6 +345,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const providerInstance =
       provider === 'google'
         ? new GoogleAuthProvider()
+        : provider === 'facebook'
+          ? new FacebookAuthProvider()
         : provider === 'apple'
           ? new OAuthProvider('apple.com')
           : new OAuthProvider('microsoft.com');
@@ -287,6 +355,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       providerInstance.setCustomParameters({
         prompt: 'select_account',
       });
+    }
+
+    if (provider === 'facebook') {
+      providerInstance.addScope('email');
+    }
+
+    if (provider === 'apple') {
+      providerInstance.addScope('email');
+      providerInstance.addScope('name');
+    }
+
+    if (provider === 'azure') {
+      providerInstance.setCustomParameters(
+        microsoftTenantId && microsoftTenantId !== 'common'
+          ? {
+              prompt: 'select_account',
+              tenant: microsoftTenantId,
+            }
+          : {
+              prompt: 'select_account',
+            }
+      );
     }
 
     try {
@@ -343,19 +433,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await firebaseSignOut(auth);
   };
 
-  const value: AuthContextValue = useMemo(
-    () => ({
-      user,
-      isAuthenticated: Boolean(user),
-      isHydrated,
-      signIn,
-      signInWithGoogleIdToken,
-      signInWithProvider,
-      signUp,
-      signOut,
-    }),
-    [isHydrated, user]
-  );
+  const value: AuthContextValue = {
+    user,
+    isAuthenticated: Boolean(user),
+    isHydrated,
+    signIn,
+    signInWithOAuthTokens,
+    signInWithGoogleIdToken,
+    signInWithProvider,
+    signUp,
+    signOut,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

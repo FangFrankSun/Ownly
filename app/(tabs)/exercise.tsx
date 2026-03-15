@@ -1,14 +1,15 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import type { ComponentProps } from 'react';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
+import { AppIcon } from '@/components/ui/app-icon';
 
 type ExerciseCategory = {
   id: string;
   label: string;
-  icon: keyof typeof MaterialIcons.glyphMap;
+  icon: ComponentProps<typeof AppIcon>['name'];
 };
 
 type ExerciseTemplate = {
@@ -262,7 +263,7 @@ export default function ExerciseScreen() {
       <AppCard delay={160}>
         <SectionLabel text="Exercise Library" />
         <View style={styles.searchRow}>
-          <MaterialIcons color="#6B7491" name="search" size={18} />
+          <AppIcon color="#6B7491" name="search" size={18} />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -283,11 +284,7 @@ export default function ExerciseScreen() {
                   styles.categoryPill,
                   selected && { backgroundColor: `${theme.primary}1A`, borderColor: `${theme.primary}66` },
                 ]}>
-                <MaterialIcons
-                  color={selected ? theme.primary : '#5A6586'}
-                  name={category.icon}
-                  size={16}
-                />
+                <AppIcon color={selected ? theme.primary : '#5A6586'} name={category.icon} size={16} />
                 <Text style={[styles.categoryPillText, selected && { color: theme.primary }]}>
                   {category.label}
                 </Text>
@@ -321,7 +318,7 @@ export default function ExerciseScreen() {
                     MET {exercise.met.toFixed(1)} · ~{perHour} kcal/hour
                   </Text>
                 </View>
-                {selected ? <MaterialIcons color={theme.primary} name="check-circle" size={18} /> : null}
+                {selected ? <AppIcon color={theme.primary} name="check-circle" size={18} /> : null}
               </Pressable>
             );
           })}

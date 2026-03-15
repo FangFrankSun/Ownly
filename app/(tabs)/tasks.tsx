@@ -1,4 +1,3 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -15,6 +14,7 @@ import { formatTaskDateTime } from '@/components/app/task-date-utils';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
+import { AppIcon } from '@/components/ui/app-icon';
 
 const COMPLETED_DROPDOWN_OPEN_MS = 260;
 const COMPLETED_DROPDOWN_CLOSE_MS = 220;
@@ -199,7 +199,7 @@ export default function TasksScreen() {
             task.done && styles.checkOn,
             task.done && { borderColor: theme.primary, backgroundColor: theme.primary },
           ]}>
-          {task.done ? <MaterialIcons color="#FFFFFF" name="check" size={14} /> : null}
+          {task.done ? <AppIcon color="#FFFFFF" name="check" size={14} /> : null}
         </Pressable>
 
         <View style={styles.rowTextWrap}>
@@ -219,7 +219,7 @@ export default function TasksScreen() {
         <Pressable
           onPress={() => router.push({ pathname: '/task-editor', params: { taskId: task.id } })}
           style={styles.editButton}>
-          <MaterialIcons color="#3D4A72" name="edit" size={16} />
+          <AppIcon color="#3D4A72" name="edit" size={16} />
         </Pressable>
       </View>
     );
@@ -240,7 +240,7 @@ export default function TasksScreen() {
               shadowColor: theme.primary,
             },
           ]}>
-          <MaterialIcons color="#FFFFFF" name="add" size={30} />
+          <AppIcon color="#FFFFFF" name="add" size={30} />
         </Pressable>
       }>
       <AppCard delay={90}>
@@ -275,7 +275,7 @@ export default function TasksScreen() {
               <Text style={[styles.completedToggleText, { color: theme.primary }]}>
                 {showCompleted ? 'Hide' : 'Show All'} ({completedTasks.length})
               </Text>
-              <MaterialIcons
+              <AppIcon
                 color={theme.primary}
                 name={showCompleted ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
                 size={18}

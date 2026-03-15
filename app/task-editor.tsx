@@ -1,4 +1,3 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -24,6 +23,7 @@ import {
 } from '@/components/app/task-date-utils';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
+import { AppIcon } from '@/components/ui/app-icon';
 
 function hslToHex(hue: number, saturation: number, lightness: number) {
   const s = saturation / 100;
@@ -459,7 +459,7 @@ export default function TaskEditorScreen() {
           showsVerticalScrollIndicator={false}>
           <View style={styles.topRow}>
             <Pressable onPress={() => router.back()} style={styles.iconButton}>
-              <MaterialIcons color="#4A5576" name="close" size={22} />
+              <AppIcon color="#4A5576" name="close" size={22} />
             </Pressable>
             <View style={styles.headerCopy}>
               <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Create Task'}</Text>
@@ -467,7 +467,7 @@ export default function TaskEditorScreen() {
             </View>
             {editingTask ? (
               <Pressable onPress={handleDeleteTask} style={styles.deleteTopButton}>
-                <MaterialIcons color="#C7364A" name="delete-outline" size={19} />
+                <AppIcon color="#C7364A" name="delete-outline" size={19} />
               </Pressable>
             ) : (
               <View style={styles.headerSpacer} />
@@ -477,7 +477,7 @@ export default function TaskEditorScreen() {
           <View style={styles.card}>
             <View style={styles.sectionHeadingRow}>
               <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
-                <MaterialIcons color={theme.primary} name="edit-note" size={16} />
+                <AppIcon color={theme.primary} name="edit-note" size={16} />
               </View>
               <Text style={styles.sectionTitle}>Task Details</Text>
             </View>
@@ -501,13 +501,13 @@ export default function TaskEditorScreen() {
             <Text style={styles.inputLabel}>Date & Duration</Text>
             <Pressable onPress={openPicker} style={styles.pickerButton}>
               <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
-                <MaterialIcons color={theme.primary} name="event" size={17} />
+                <AppIcon color={theme.primary} name="event" size={17} />
               </View>
               <View style={styles.pickerTextBlock}>
                 <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
                 <Text style={styles.pickerSubtext}>{durationMinutes} min</Text>
               </View>
-              <MaterialIcons color="#6A7798" name="chevron-right" size={20} />
+              <AppIcon color="#6A7798" name="chevron-right" size={20} />
             </Pressable>
             <View style={styles.repeatRow}>
               <View style={styles.repeatTextBlock}>
@@ -527,7 +527,7 @@ export default function TaskEditorScreen() {
           <View style={styles.card}>
             <View style={styles.sectionHeadingRow}>
               <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
-                <MaterialIcons color={theme.primary} name="category" size={16} />
+                <AppIcon color={theme.primary} name="category" size={16} />
               </View>
               <Text style={styles.sectionTitle}>Categories</Text>
               <View style={styles.sectionHeadingSpacer} />
@@ -567,7 +567,7 @@ export default function TaskEditorScreen() {
                     </Pressable>
                     {categoryEditMode ? (
                       <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
-                        <MaterialIcons color="#C7364A" name="delete-outline" size={18} />
+                        <AppIcon color="#C7364A" name="delete-outline" size={18} />
                       </Pressable>
                     ) : null}
                   </View>
@@ -747,7 +747,7 @@ export default function TaskEditorScreen() {
                 <View style={styles.paletteModalHeader}>
                   <Text style={styles.modalTitle}>Choose Category Color</Text>
                   <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
-                    <MaterialIcons color="#5B6581" name="close" size={20} />
+                    <AppIcon color="#5B6581" name="close" size={20} />
                   </Pressable>
                 </View>
 
@@ -821,7 +821,7 @@ export default function TaskEditorScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.deleteConfirmCard}>
             <View style={styles.deleteConfirmIconWrap}>
-              <MaterialIcons color="#CB3750" name="delete-outline" size={20} />
+              <AppIcon color="#CB3750" name="delete-outline" size={20} />
             </View>
             <Text style={styles.deleteConfirmTitle}>Delete task?</Text>
             <Text style={styles.deleteConfirmDescription}>

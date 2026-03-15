@@ -1,7 +1,7 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import type { ReactNode, RefObject } from 'react';
+import type { ComponentProps, ReactNode, RefObject } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import { AppIcon } from '@/components/ui/app-icon';
 import { useAppTheme } from './theme-context';
 
 type ScreenShellProps = {
@@ -22,8 +22,8 @@ export function ScreenShell({ title, subtitle, children, floatingAction, scrollR
 
   return (
     <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
-      <View style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
-      <View style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
+      <View pointerEvents="none" style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
+      <View pointerEvents="none" style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Animated.View entering={FadeInUp.duration(500)}>
           <Text style={styles.title}>{title}</Text>
@@ -31,7 +31,11 @@ export function ScreenShell({ title, subtitle, children, floatingAction, scrollR
         </Animated.View>
         {children}
       </ScrollView>
-      {floatingAction ? <View style={styles.floatingActionWrap}>{floatingAction}</View> : null}
+      {floatingAction ? (
+        <View pointerEvents="box-none" style={styles.floatingActionWrap}>
+          {floatingAction}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -49,14 +53,14 @@ export function CardTitle({
   title,
   accent,
 }: {
-  icon: keyof typeof MaterialIcons.glyphMap;
+  icon: ComponentProps<typeof AppIcon>['name'];
   title: string;
   accent: string;
 }) {
   return (
     <View style={styles.cardTitleRow}>
       <View style={[styles.iconWrap, { backgroundColor: accent }]}>
-        <MaterialIcons color="#FFFFFF" name={icon} size={16} />
+        <AppIcon color="#FFFFFF" name={icon} size={16} />
       </View>
       <Text style={styles.cardTitle}>{title}</Text>
     </View>
