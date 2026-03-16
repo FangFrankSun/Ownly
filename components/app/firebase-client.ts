@@ -49,7 +49,11 @@ function createAuth() {
   }
 
   if (Platform.OS === 'web') {
-    return getAuth(app);
+    const webAuth = getAuth(app);
+    void setPersistence(webAuth, browserLocalPersistence).catch((error: unknown) => {
+      console.error('Failed to enable Firebase auth persistence on web', error);
+    });
+    return webAuth;
   }
 
   try {
@@ -83,7 +87,7 @@ function normalizeHost(value: string) {
 }
 
 function isLocalhostHost(hostname: string) {
-  return hostname === 'localhost';
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
 }
 
 function isLoopbackIpHost(hostname: string) {
@@ -126,6 +130,11 @@ export function getWebFirebaseAuthSupport(): WebFirebaseAuthSupport {
   const currentOrigin = currentUrl.origin;
   const currentHost = currentUrl.hostname.toLowerCase();
 
+  // Localhost should always be allowed for local development flows.
+  if (isLocalhostHost(currentHost)) {
+    return { isSupported: true, currentOrigin };
+  }
+
   if (configuredWebAppUrl) {
     try {
       const configuredUrl = new URL(configuredWebAppUrl);
@@ -142,10 +151,6 @@ export function getWebFirebaseAuthSupport(): WebFirebaseAuthSupport {
     } catch {
       // Ignore malformed optional app URLs and fall back to the current origin checks.
     }
-  }
-
-  if (isLocalhostHost(currentHost)) {
-    return { isSupported: true, currentOrigin };
   }
 
   const allowedHosts = new Set([
@@ -182,10 +187,4 @@ export function getWebFirebaseAuthSupport(): WebFirebaseAuthSupport {
   // For real public domains, let Firebase/Auth enforce the final decision.
   // We only hard-block obviously problematic local dev origins here.
   return { isSupported: true, currentOrigin };
-}
-
-if (auth && Platform.OS === 'web') {
-  void setPersistence(auth, browserLocalPersistence).catch((error: unknown) => {
-    console.error('Failed to enable Firebase auth persistence on web', error);
-  });
 }

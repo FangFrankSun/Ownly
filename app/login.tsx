@@ -5,6 +5,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Crypto from 'expo-crypto';
 import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
+import { Image as ExpoImage } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -22,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/app/auth-context';
 import { getWebFirebaseAuthSupport } from '@/components/app/firebase-client';
+import { useLanguage } from '@/components/app/language-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { AppIcon } from '@/components/ui/app-icon';
 
@@ -32,6 +34,14 @@ type NativeProvider = 'Apple' | 'Google' | 'Facebook' | 'Microsoft';
 WebBrowser.maybeCompleteAuthSession();
 
 const NONCE_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
+const GOOGLE_G_SVG = encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 533.5 544.3">
+  <path fill="#4285F4" d="M533.5 278.4c0-18.5-1.5-37.1-4.7-55.3H272v104.7h147.1c-6.1 33.7-25 63.5-52.2 82.4v68h84.4c49.4-45.5 77.3-112.4 77.3-199.8Z"/>
+  <path fill="#34A853" d="M272 544.3c73.4 0 135.3-24.3 180.4-66.1l-84.4-68c-23.5 16-53.8 25.2-96 25.2-71.1 0-131.4-48-152.9-112.7H32.1v70.1C78.3 484.4 168.8 544.3 272 544.3Z"/>
+  <path fill="#FBBC05" d="M119.1 322.7c-10.7-31.5-10.7-65.7 0-97.2v-70.1H32.1c-38.6 76.9-38.6 160.5 0 237.4l87-70.1Z"/>
+  <path fill="#EA4335" d="M272 107.7c44.7-.7 87.8 16.2 120.7 47.1l90.2-90.2C434.9 19.8 372.9-1.8 272 0 168.8 0 78.3 59.9 32.1 155.4l87 70.1C140.6 155.7 200.9 107.7 272 107.7Z"/>
+</svg>
+`);
 
 function createNonce(length = 32) {
   return Array.from(Crypto.getRandomBytes(length), (byte) => NONCE_CHARSET[byte % NONCE_CHARSET.length]).join('');
@@ -98,10 +108,22 @@ function mapNativeAuthError(provider: NativeProvider, error: unknown) {
   return message || `${provider} sign-in failed. Please try again.`;
 }
 
+function GoogleLogo({ size = 24 }: { size?: number }) {
+  return (
+    <ExpoImage
+      contentFit="contain"
+      source={{ uri: `data:image/svg+xml;utf8,${GOOGLE_G_SVG}` }}
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signIn, signInWithGoogleIdToken, signInWithOAuthTokens, signInWithProvider, signUp } = useAuth();
+  const { isAuthenticated, signIn, signInWithGoogleIdToken, signInWithOAuthTokens, signInWithProvider, signUp } =
+    useAuth();
+  const { t } = useLanguage();
   const { theme } = useAppTheme();
 
   const [mode, setMode] = useState<AuthMode>('signin');
@@ -173,6 +195,28 @@ export default function LoginScreen() {
   const canUseNativeGoogle = isIos && !isExpoGo && Boolean(googleIosClientId);
   const canUseNativeFacebook = Platform.OS !== 'web' && !isExpoGo && Boolean(facebookAppId);
   const canUseNativeMicrosoft = Platform.OS !== 'web' && !isExpoGo && Boolean(microsoftClientId);
+
+  useEffect(() => {
+    if (!isWeb || !isSubmitting || !isAuthenticated) {
+      return;
+    }
+
+    setIsSubmitting(false);
+    setError('');
+    setMessage('');
+    router.replace('/dashboard');
+  }, [isAuthenticated, isSubmitting, isWeb, router]);
+
+  useEffect(() => {
+    if (!isWeb || !isAuthenticated) {
+      return;
+    }
+
+    setIsSubmitting(false);
+    setError('');
+    setMessage('');
+    router.replace('/dashboard');
+  }, [isAuthenticated, isWeb, router]);
 
   useEffect(() => {
     if (!isIos) {
@@ -419,8 +463,15 @@ export default function LoginScreen() {
       return;
     }
 
+    if (isWeb) {
+      setMessage('Finishing sign-in...');
+      return;
+    }
+
+    setMessage('');
+    setError('');
     setIsSubmitting(false);
-    router.replace('/(tabs)/tasks');
+    router.replace('/dashboard');
   };
 
   const submitProvider = async (provider: OAuthProvider) => {
@@ -429,10 +480,7 @@ export default function LoginScreen() {
 
     const attemptId = webPopupAttemptRef.current + 1;
     webPopupAttemptRef.current = attemptId;
-
-    if (!isWeb) {
-      setIsSubmitting(true);
-    }
+    setIsSubmitting(true);
 
     try {
       const result = await signInWithProvider(provider);
@@ -448,14 +496,18 @@ export default function LoginScreen() {
 
       if (result.message) {
         setMessage(result.message);
-        setIsSubmitting(false);
+        return;
+      }
+
+      if (isWeb) {
+        setMessage('Finishing sign-in...');
         return;
       }
 
       setIsSubmitting(false);
       setMessage('');
       setError('');
-      router.replace('/(tabs)/tasks');
+      router.replace('/dashboard');
     } catch (error) {
       if (webPopupAttemptRef.current !== attemptId) {
         return;
@@ -728,31 +780,31 @@ export default function LoginScreen() {
           showsVerticalScrollIndicator={false}>
           <View style={[styles.panel, Platform.OS === 'web' ? styles.panelWeb : styles.panelPhone]}>
             <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>Me</Text>
+              <Text style={styles.brandMarkText}>Ownly</Text>
             </View>
 
-            <Text style={[styles.headline, !isWeb ? styles.headlinePhone : null]}>Your AI workspace.</Text>
-            <Text style={[styles.subheadline, !isWeb ? styles.subheadlinePhone : null]}>Log in to your account</Text>
+            <Text style={[styles.headline, !isWeb ? styles.headlinePhone : null]}>{t('login.title')}</Text>
+            <Text style={[styles.subheadline, !isWeb ? styles.subheadlinePhone : null]}>{t('login.subtitle')}</Text>
 
             {isWeb ? (
               <>
                 <View style={styles.dividerRow}>
                   <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>Log in with</Text>
+                  <Text style={styles.dividerText}>{t('login.with')}</Text>
                   <View style={styles.dividerLine} />
                 </View>
 
                 <View style={[styles.providerGroup, styles.providerGroupWeb]}>
                   <Pressable
-                    disabled={false}
+                    disabled={isSubmitting}
                     onPress={() => submitProvider('google')}
                     style={[styles.providerButton, styles.providerButtonWeb]}>
-                    <AppIcon color="#4285F4" family="community" name="google" size={24} />
+                    <GoogleLogo size={24} />
                     <Text style={[styles.providerText, styles.providerTextWeb]}>Google</Text>
                   </Pressable>
 
                   <Pressable
-                    disabled={false}
+                    disabled={isSubmitting}
                     onPress={() => submitProvider('facebook')}
                     style={[styles.providerButton, styles.providerButtonWeb]}>
                     <AppIcon color="#1877F2" family="community" name="facebook" size={24} />
@@ -760,7 +812,7 @@ export default function LoginScreen() {
                   </Pressable>
 
                   <Pressable
-                    disabled={false}
+                    disabled={isSubmitting}
                     onPress={() => submitProvider('apple')}
                     style={[styles.providerButton, styles.providerButtonWeb]}>
                     <AppIcon color="#151515" family="community" name="apple" size={24} />
@@ -768,7 +820,7 @@ export default function LoginScreen() {
                   </Pressable>
 
                   <Pressable
-                    disabled={false}
+                    disabled={isSubmitting}
                     onPress={() => submitProvider('azure')}
                     style={[styles.providerButton, styles.providerButtonWeb]}>
                     <AppIcon color="#00A4EF" family="community" name="microsoft" size={24} />
@@ -802,7 +854,7 @@ export default function LoginScreen() {
                   <>
                     <View style={styles.dividerRow}>
                       <View style={styles.dividerLine} />
-                      <Text style={styles.dividerText}>Continue with</Text>
+                  <Text style={styles.dividerText}>{t('login.with')}</Text>
                       <View style={styles.dividerLine} />
                     </View>
 
@@ -819,7 +871,7 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <AppIcon color="#151515" family="community" name="apple" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Apple</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Apple`}</Text>
                         </Pressable>
                       ) : null}
 
@@ -833,9 +885,9 @@ export default function LoginScreen() {
                             isSubmitting ? styles.providerButtonDisabled : null,
                           ]}>
                           <View style={styles.providerIconWrap}>
-                            <AppIcon color="#4285F4" family="community" name="google" size={26} />
+                            <GoogleLogo size={24} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Google</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Google`}</Text>
                         </Pressable>
                       ) : null}
 
@@ -851,7 +903,7 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <AppIcon color="#1877F2" family="community" name="facebook" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Facebook</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Facebook`}</Text>
                         </Pressable>
                       ) : null}
 
@@ -867,20 +919,13 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <AppIcon color="#00A4EF" family="community" name="microsoft" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Microsoft</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Microsoft`}</Text>
                         </Pressable>
                       ) : null}
                     </View>
                   </>
                 ) : null}
 
-                <Text style={styles.mobileSupportText}>
-                  {isExpoGo
-                    ? 'Social sign-in needs the Ownly development build or production app. Email/password still works in Expo Go.'
-                    : canUseNativeApple || canUseNativeGoogle || canUseNativeFacebook || canUseNativeMicrosoft
-                      ? 'Apple, Google, Facebook, and Microsoft sign-in are available here after provider setup. Email/password also works here.'
-                      : 'Email/password works here now. Social sign-in will appear after native provider setup is added to this build.'}
-                </Text>
               </>
             ) : Platform.OS === 'android' ? (
               <>
@@ -888,7 +933,7 @@ export default function LoginScreen() {
                   <>
                     <View style={styles.dividerRow}>
                       <View style={styles.dividerLine} />
-                      <Text style={styles.dividerText}>Continue with</Text>
+                      <Text style={styles.dividerText}>{t('login.with')}</Text>
                       <View style={styles.dividerLine} />
                     </View>
 
@@ -905,7 +950,7 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <AppIcon color="#1877F2" family="community" name="facebook" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Facebook</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Facebook`}</Text>
                         </Pressable>
                       ) : null}
 
@@ -921,30 +966,21 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <AppIcon color="#00A4EF" family="community" name="microsoft" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Microsoft</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Microsoft`}</Text>
                         </Pressable>
                       ) : null}
                     </View>
                   </>
                 ) : null}
 
-                <Text style={styles.mobileSupportText}>
-                  {isExpoGo
-                    ? 'Social sign-in needs the Ownly development build or production app. Email/password still works in Expo Go.'
-                    : canUseNativeFacebook || canUseNativeMicrosoft
-                      ? 'Facebook and Microsoft sign-in are available on Android after provider setup. Apple sign-in is iOS only. Email/password also works here.'
-                      : 'Email/password works here now. Facebook and Microsoft sign-in will appear after the Android build includes their provider setup. Apple sign-in is iOS only.'}
-                </Text>
               </>
-            ) : (
-              <Text style={styles.mobileSupportText}>Mobile currently supports email/password sign-in.</Text>
-            )}
+            ) : null}
 
             {shouldShowEmailForm ? (
               <View style={styles.emailBlock}>
                 <View style={styles.dividerRow}>
                   <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or continue with email</Text>
+                  <Text style={styles.dividerText}>{t('login.emailSection')}</Text>
                   <View style={styles.dividerLine} />
                 </View>
 
@@ -956,7 +992,7 @@ export default function LoginScreen() {
                       mode === 'signin' && styles.modeButtonActive,
                       mode === 'signin' && { backgroundColor: theme.secondary },
                     ]}>
-                    <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>Sign In</Text>
+                    <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>{t('login.signIn')}</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => switchMode('signup')}
@@ -965,7 +1001,7 @@ export default function LoginScreen() {
                       mode === 'signup' && styles.modeButtonActive,
                       mode === 'signup' && { backgroundColor: theme.secondary },
                     ]}>
-                    <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>Sign Up</Text>
+                    <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>{t('login.signUp')}</Text>
                   </Pressable>
                 </View>
 
@@ -984,7 +1020,7 @@ export default function LoginScreen() {
                   autoCapitalize="none"
                   keyboardType="email-address"
                   onChangeText={setEmail}
-                  placeholder="Enter your email address..."
+                  placeholder={t('login.email')}
                   placeholderTextColor="#8A93A9"
                   returnKeyType="next"
                   style={styles.input}
@@ -993,7 +1029,7 @@ export default function LoginScreen() {
                 <TextInput
                   onChangeText={setPassword}
                   onSubmitEditing={submitEmailAuth}
-                  placeholder="Password"
+                  placeholder={t('login.password')}
                   placeholderTextColor="#8A93A9"
                   returnKeyType="done"
                   secureTextEntry
@@ -1006,7 +1042,7 @@ export default function LoginScreen() {
                   onPress={submitEmailAuth}
                   style={[styles.primaryButton, { backgroundColor: theme.primary }]}>
                   <Text style={styles.primaryButtonText}>
-                    {isSubmitting ? 'Please wait...' : mode === 'signin' ? 'Continue' : 'Create Account'}
+                    {isSubmitting ? 'Please wait...' : mode === 'signin' ? t('login.continue') : t('login.signUp')}
                   </Text>
                 </Pressable>
               </View>
@@ -1016,8 +1052,7 @@ export default function LoginScreen() {
             {message ? <Text style={styles.messageText}>{message}</Text> : null}
 
             <Text style={[styles.termsCopy, Platform.OS === 'web' && styles.termsCopyWeb]}>
-              By continuing, you acknowledge that you understand and agree to the Terms & Conditions and Privacy
-              Policy.
+              {t('login.terms')}
             </Text>
 
             {Platform.OS !== 'web' ? (
@@ -1067,18 +1102,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   brandMark: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
+    width: 74,
+    height: 74,
+    borderRadius: 16,
     borderWidth: 1.5,
     borderColor: '#212121',
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
   },
   brandMarkText: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '800',
     color: '#111111',
+    letterSpacing: -0.15,
   },
   headline: {
     fontSize: 28,
@@ -1090,7 +1128,7 @@ const styles = StyleSheet.create({
   headlinePhone: {
     fontSize: 22,
     lineHeight: 28,
-    marginTop: 2,
+    marginTop: 0,
   },
   subheadline: {
     fontSize: 18,
@@ -1102,7 +1140,7 @@ const styles = StyleSheet.create({
   subheadlinePhone: {
     fontSize: 15,
     lineHeight: 20,
-    marginTop: -4,
+    marginTop: -6,
   },
   dividerRow: {
     flexDirection: 'row',
@@ -1234,11 +1272,6 @@ const styles = StyleSheet.create({
   providerHintText: {
     fontSize: 12,
     lineHeight: 17,
-    color: '#6B7280',
-  },
-  mobileSupportText: {
-    fontSize: 13,
-    lineHeight: 19,
     color: '#6B7280',
   },
   termsCopy: {

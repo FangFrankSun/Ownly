@@ -10,7 +10,9 @@ import {
 } from 'react-native';
 import Reanimated, { Easing, FadeIn, FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 
+import { localizeTaskCategoryName } from '@/components/app/display-text';
 import { formatTaskDateTime } from '@/components/app/task-date-utils';
+import { useLanguage } from '@/components/app/language-context';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
@@ -23,6 +25,7 @@ const COMPLETED_CLOSE_STAGGER_MS = 95;
 
 export default function TasksScreen() {
   const router = useRouter();
+  const { effectiveLanguage, localeTag, t } = useLanguage();
   const { theme } = useAppTheme();
   const { tasks, categories, toggleTaskDone } = useTasks();
   const scrollRef = useRef<ScrollView | null>(null);
@@ -179,7 +182,10 @@ export default function TasksScreen() {
   };
 
   const renderTaskItem = (task: (typeof tasks)[number], inCompletedSection: boolean) => {
-    const categoryName = categoryNameById.get(task.categoryId) ?? 'General';
+    const categoryName = localizeTaskCategoryName(
+      categoryNameById.get(task.categoryId) ?? t('tasks.general'),
+      effectiveLanguage
+    );
     const isCompleting = completingTaskId === task.id && !task.done;
 
     return (
@@ -210,8 +216,8 @@ export default function TasksScreen() {
             ) : null}
           </View>
           <Text style={[styles.rowSubtitle, task.done && styles.rowSubtitleDone]}>
-            {formatTaskDateTime(task.scheduledAt)} · {task.durationMinutes}m · {categoryName}
-            {task.repeatable ? ' · Repeats' : ''}
+            {formatTaskDateTime(task.scheduledAt, localeTag)} · {t('common.minutesShort', { minutes: task.durationMinutes })} · {categoryName}
+            {task.repeatable ? ` · ${t('tasks.repeats')}` : ''}
           </Text>
           {task.notes ? <Text style={[styles.notesText, task.done && styles.notesTextDone]}>{task.notes}</Text> : null}
         </View>
@@ -228,8 +234,8 @@ export default function TasksScreen() {
   return (
     <ScreenShell
       scrollRef={scrollRef}
-      title="Tasks"
-      subtitle="Track tasks and tap + to add a new one."
+      title={t('tasks.title')}
+      subtitle={t('tasks.subtitle')}
       floatingAction={
         <Pressable
           onPress={() => router.push('/task-editor')}
@@ -244,20 +250,20 @@ export default function TasksScreen() {
         </Pressable>
       }>
       <AppCard delay={90}>
-        <SectionLabel text="Progress" />
-        <CardTitle accent={theme.primary} icon="stars" title="Today Focus" />
+        <SectionLabel text={t('tasks.progress')} />
+        <CardTitle accent={theme.primary} icon="stars" title={t('tasks.focus')} />
         <Text style={styles.heroText}>
-          {doneCount} of {tasks.length} tasks finished
+          {t('tasks.finished', { done: doneCount, total: tasks.length })}
         </Text>
         <View style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: theme.primary }]} />
         </View>
-        <Text style={styles.metaText}>{progressPercent}% complete</Text>
+        <Text style={styles.metaText}>{t('tasks.completePercent', { percent: progressPercent })}</Text>
       </AppCard>
 
       <AppCard delay={160}>
-        <SectionLabel text="To-Do List" />
-        {activeTasks.length === 0 ? <Text style={styles.emptyText}>No active tasks. Nice work.</Text> : null}
+        <SectionLabel text={t('tasks.todo')} />
+        {activeTasks.length === 0 ? <Text style={styles.emptyText}>{t('tasks.noActive')}</Text> : null}
         {activeTasks.map((task) => renderTaskItem(task, false))}
       </AppCard>
 
@@ -267,13 +273,13 @@ export default function TasksScreen() {
         }}>
         <AppCard delay={220}>
           <View style={styles.completedHeaderRow}>
-            <SectionLabel text="Completed" />
+            <SectionLabel text={t('tasks.completed')} />
             <Pressable
               disabled={isAnimatingCompletedToggle.current}
               onPress={toggleCompletedVisibility}
               style={[styles.completedToggleButton, { borderColor: `${theme.primary}33` }]}>
               <Text style={[styles.completedToggleText, { color: theme.primary }]}>
-                {showCompleted ? 'Hide' : 'Show All'} ({completedTasks.length})
+                {showCompleted ? t('common.hide') : t('common.show')} ({completedTasks.length})
               </Text>
               <AppIcon
                 color={theme.primary}
@@ -294,10 +300,10 @@ export default function TasksScreen() {
                 </Reanimated.View>
               ))
             ) : showCompleted ? (
-              <Text style={styles.emptyText}>Completed tasks will appear here.</Text>
+              <Text style={styles.emptyText}>{t('tasks.noCompleted')}</Text>
             ) : showCompletedHiddenHint ? (
               <Reanimated.View entering={FadeIn.duration(170).easing(Easing.out(Easing.quad))}>
-                <Text style={styles.completedCollapsedHint}>Completed tasks are hidden.</Text>
+                <Text style={styles.completedCollapsedHint}>{t('tasks.completedHidden')}</Text>
               </Reanimated.View>
             ) : null}
           </View>

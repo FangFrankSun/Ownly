@@ -133,7 +133,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const seededCategoriesRef = useRef(false);
 
   useEffect(() => {
-    if (!user || !db) {
+    const firestore = db;
+
+    if (!user || !firestore) {
       setCategories([]);
       setTasks([]);
       seededCategoriesRef.current = false;
@@ -141,11 +143,11 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     }
 
     const categoriesQuery = query(
-      collection(db, 'users', user.id, 'task_categories'),
+      collection(firestore, 'users', user.id, 'task_categories'),
       orderBy('createdAt', 'asc')
     );
 
-    const tasksQuery = query(collection(db, 'users', user.id, 'tasks'), orderBy('createdAt', 'desc'));
+    const tasksQuery = query(collection(firestore, 'users', user.id, 'tasks'), orderBy('createdAt', 'desc'));
 
     const unsubscribeCategories = onSnapshot(
       categoriesQuery,
@@ -163,9 +165,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         if (nextCategories.length === 0 && !seededCategoriesRef.current) {
           seededCategoriesRef.current = true;
           const seed = buildSeedCategories(user.id);
-          const batch = writeBatch(db);
+          const batch = writeBatch(firestore);
           for (const category of seed) {
-            batch.set(doc(db, 'users', user.id, 'task_categories', category.id), {
+            batch.set(doc(firestore, 'users', user.id, 'task_categories', category.id), {
               name: category.name,
               color: category.color,
               createdAt: Date.now(),

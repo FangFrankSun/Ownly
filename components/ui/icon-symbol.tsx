@@ -1,6 +1,6 @@
-// Fallback for using shared app icons on Android and web.
+// Shared cross-platform icon bridge for tab/navigation icons.
 
-import { SymbolWeight, SymbolViewProps } from 'expo-symbols';
+import type { SymbolWeight, SymbolViewProps } from 'expo-symbols';
 import type { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 import { AppIcon } from '@/components/ui/app-icon';
@@ -15,6 +15,7 @@ type IconSymbolName = keyof typeof MAPPING;
  */
 const MAPPING = {
   'house.fill': 'home',
+  'square.grid.2x2.fill': 'dashboard',
   'paperplane.fill': 'send',
   'checkmark.circle.fill': 'check-circle',
   calendar: 'calendar-month',

@@ -21,6 +21,8 @@ import {
   isValidIsoDate,
   toIsoWithDateAndTime,
 } from '@/components/app/task-date-utils';
+import { localizeTaskCategoryName } from '@/components/app/display-text';
+import { useLanguage } from '@/components/app/language-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 import { AppIcon } from '@/components/ui/app-icon';
@@ -119,7 +121,7 @@ function buildDateOptions(days = 21) {
   });
 }
 
-function buildTimeOptions() {
+function buildTimeOptions(localeTag: string) {
   const options: { key: string; hour: number; minute: number; label: string }[] = [];
 
   for (let hour = 0; hour < 24; hour += 1) {
@@ -132,7 +134,7 @@ function buildTimeOptions() {
         key,
         hour,
         minute,
-        label: display.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+        label: display.toLocaleTimeString(localeTag, { hour: 'numeric', minute: '2-digit' }),
       });
     }
   }
@@ -238,6 +240,7 @@ function PaletteSwatch({ color, selected, size, onPress }: PaletteSwatchProps) {
 export default function TaskEditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { effectiveLanguage, localeTag, t } = useLanguage();
   const { theme } = useAppTheme();
   const { taskId } = useLocalSearchParams<{ taskId?: string }>();
   const { tasks, categories, addTask, updateTask, deleteTask, addCategory, updateCategoryColor, deleteCategory } =
@@ -286,7 +289,7 @@ export default function TaskEditorScreen() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
-  const timeOptions = useMemo(() => buildTimeOptions(), []);
+  const timeOptions = useMemo(() => buildTimeOptions(localeTag), [localeTag]);
   const paletteSwatchSize = useMemo(() => {
     if (paletteGridWidth <= 0) {
       return 18;
@@ -309,13 +312,13 @@ export default function TaskEditorScreen() {
   const applyPicker = () => {
     const parsed = parseManualTime(manualTime);
     if (!parsed) {
-      setPickerError('Use 24-hour format like 1:42 or 13:42.');
+      setPickerError(t('taskEditor.use24HourError'));
       return;
     }
 
     const parsedDuration = Number(durationInput.trim());
     if (!Number.isFinite(parsedDuration) || parsedDuration < 5 || parsedDuration > 24 * 60) {
-      setPickerError('Duration must be between 5 and 1440 minutes.');
+      setPickerError(t('taskEditor.durationRangeError'));
       return;
     }
 
@@ -331,7 +334,7 @@ export default function TaskEditorScreen() {
 
   const handleCreateCategory = () => {
     if (!newCategoryName.trim()) {
-      setError('Category name is required.');
+      setError(t('taskEditor.categoryNameRequired'));
       return;
     }
 
@@ -343,7 +346,7 @@ export default function TaskEditorScreen() {
 
   const handleDeleteCategory = (id: string) => {
     if (categories.length <= 1) {
-      setError('At least one category must remain.');
+      setError(t('taskEditor.atLeastOneCategory'));
       return;
     }
 
@@ -359,17 +362,17 @@ export default function TaskEditorScreen() {
 
   const handleSave = () => {
     if (!title.trim()) {
-      setError('Task title is required.');
+      setError(t('taskEditor.taskTitleRequired'));
       return;
     }
 
     if (!categoryId) {
-      setError('Please select a category.');
+      setError(t('taskEditor.selectCategory'));
       return;
     }
 
     if (!isValidIsoDate(scheduledAt)) {
-      setError('Choose a valid date and time.');
+      setError(t('taskEditor.validDateTime'));
       return;
     }
 
@@ -415,7 +418,7 @@ export default function TaskEditorScreen() {
 
     const normalized = normalizeHexColor(paletteHexInput);
     if (!normalized) {
-      setPaletteError('Use a valid hex color like #4C6FFF.');
+      setPaletteError(t('taskEditor.validHexColor'));
       return;
     }
 
@@ -462,8 +465,8 @@ export default function TaskEditorScreen() {
               <AppIcon color="#4A5576" name="close" size={22} />
             </Pressable>
             <View style={styles.headerCopy}>
-              <Text style={styles.title}>{editingTask ? 'Edit Task' : 'Create Task'}</Text>
-              <Text style={styles.headerSubtitle}>Keep details clear so your calendar stays focused.</Text>
+              <Text style={styles.title}>{editingTask ? t('taskEditor.titleEdit') : t('taskEditor.titleCreate')}</Text>
+              <Text style={styles.headerSubtitle}>{t('taskEditor.subtitle')}</Text>
             </View>
             {editingTask ? (
               <Pressable onPress={handleDeleteTask} style={styles.deleteTopButton}>
@@ -479,40 +482,40 @@ export default function TaskEditorScreen() {
               <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
                 <AppIcon color={theme.primary} name="edit-note" size={16} />
               </View>
-              <Text style={styles.sectionTitle}>Task Details</Text>
+              <Text style={styles.sectionTitle}>{t('taskEditor.sectionDetails')}</Text>
             </View>
-            <Text style={styles.inputLabel}>Title</Text>
+            <Text style={styles.inputLabel}>{t('taskEditor.labelTitle')}</Text>
             <TextInput
               onChangeText={setTitle}
-              placeholder="Title"
+              placeholder={t('taskEditor.placeholderTitle')}
               placeholderTextColor="#8E96AC"
               style={styles.input}
               value={title}
             />
-            <Text style={styles.inputLabel}>Notes</Text>
+            <Text style={styles.inputLabel}>{t('taskEditor.labelNotes')}</Text>
             <TextInput
               multiline
               onChangeText={setNotes}
-              placeholder="Notes"
+              placeholder={t('taskEditor.placeholderNotes')}
               placeholderTextColor="#8E96AC"
               style={[styles.input, styles.notesInput]}
               value={notes}
             />
-            <Text style={styles.inputLabel}>Date & Duration</Text>
+            <Text style={styles.inputLabel}>{t('taskEditor.labelDateDuration')}</Text>
             <Pressable onPress={openPicker} style={styles.pickerButton}>
               <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
                 <AppIcon color={theme.primary} name="event" size={17} />
               </View>
               <View style={styles.pickerTextBlock}>
-                <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt)}</Text>
-                <Text style={styles.pickerSubtext}>{durationMinutes} min</Text>
+                <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt, localeTag)}</Text>
+                <Text style={styles.pickerSubtext}>{t('common.minutesLong', { minutes: durationMinutes })}</Text>
               </View>
               <AppIcon color="#6A7798" name="chevron-right" size={20} />
             </Pressable>
             <View style={styles.repeatRow}>
               <View style={styles.repeatTextBlock}>
-                <Text style={styles.repeatLabel}>Repeat task</Text>
-                <Text style={styles.repeatSubtext}>Automatically keep this on your schedule.</Text>
+                <Text style={styles.repeatLabel}>{t('taskEditor.repeatLabel')}</Text>
+                <Text style={styles.repeatSubtext}>{t('taskEditor.repeatSubtext')}</Text>
               </View>
               <Switch
                 ios_backgroundColor="#CCD3E3"
@@ -529,10 +532,10 @@ export default function TaskEditorScreen() {
               <View style={[styles.sectionIconBadge, { backgroundColor: `${theme.primary}18` }]}>
                 <AppIcon color={theme.primary} name="category" size={16} />
               </View>
-              <Text style={styles.sectionTitle}>Categories</Text>
+              <Text style={styles.sectionTitle}>{t('taskEditor.sectionCategories')}</Text>
               <View style={styles.sectionHeadingSpacer} />
               <Pressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
-                <Text style={styles.smallButtonText}>{categoryEditMode ? 'Done' : 'Edit'}</Text>
+                <Text style={styles.smallButtonText}>{categoryEditMode ? t('common.done') : t('common.edit')}</Text>
               </Pressable>
             </View>
             <View style={styles.categoryList}>
@@ -557,7 +560,7 @@ export default function TaskEditorScreen() {
                             color: category.color,
                           },
                         ]}>
-                        {category.name}
+                        {localizeTaskCategoryName(category.name, effectiveLanguage)}
                       </Text>
                     </Pressable>
                     <Pressable
@@ -575,23 +578,23 @@ export default function TaskEditorScreen() {
               })}
             </View>
 
-            <Text style={styles.inputLabel}>New Category</Text>
+            <Text style={styles.inputLabel}>{t('taskEditor.newCategory')}</Text>
             <TextInput
               onChangeText={setNewCategoryName}
-              placeholder="New category name"
+              placeholder={t('taskEditor.placeholderNewCategory')}
               placeholderTextColor="#8E96AC"
               style={styles.input}
               value={newCategoryName}
             />
             <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Add Category</Text>
+              <Text style={styles.secondaryButtonText}>{t('taskEditor.addCategory')}</Text>
             </Pressable>
           </View>
 
           <Pressable
             onPress={handleSave}
             style={[styles.primaryButton, { backgroundColor: theme.primary, borderColor: `${theme.primary}99` }]}>
-            <Text style={styles.primaryButtonText}>{editingTask ? 'Save Changes' : 'Create Task'}</Text>
+            <Text style={styles.primaryButtonText}>{editingTask ? t('taskEditor.saveChanges') : t('taskEditor.createTask')}</Text>
           </Pressable>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ScrollView>
@@ -611,7 +614,7 @@ export default function TaskEditorScreen() {
                 showsVerticalScrollIndicator={false}
                 style={styles.modalCardScroll}>
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
-                <Text style={styles.modalTitle}>Choose Date & Time</Text>
+                <Text style={styles.modalTitle}>{t('taskEditor.chooseDateTime')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStrip}>
                   {dateOptions.map((dateOption) => {
                     const selected = dateOption.toDateString() === pickerDate.toDateString();
@@ -625,7 +628,7 @@ export default function TaskEditorScreen() {
                           selected && { backgroundColor: theme.primary },
                         ]}>
                         <Text style={[styles.datePillWeekday, selected && styles.datePillTextActive]}>
-                          {dateOption.toLocaleDateString(undefined, { weekday: 'short' })}
+                          {dateOption.toLocaleDateString(localeTag, { weekday: 'short' })}
                         </Text>
                         <Text style={[styles.datePillDay, selected && styles.datePillTextActive]}>
                           {dateOption.getDate()}
@@ -667,11 +670,11 @@ export default function TaskEditorScreen() {
                 </ScrollView>
 
                 <View style={styles.manualTimeRow}>
-                  <Text style={styles.manualTimeLabel}>Exact time</Text>
+                  <Text style={styles.manualTimeLabel}>{t('taskEditor.exactTime')}</Text>
                   <TextInput
                     onChangeText={setManualTime}
                     value={manualTime}
-                    placeholder="1:42"
+                    placeholder={t('taskEditor.manualTimePlaceholder')}
                     placeholderTextColor="#8E96AC"
                     style={styles.manualTimeInput}
                     keyboardType="numbers-and-punctuation"
@@ -679,11 +682,11 @@ export default function TaskEditorScreen() {
                 </View>
 
                 <View style={styles.manualTimeRow}>
-                  <Text style={styles.manualTimeLabel}>Duration (min)</Text>
+                  <Text style={styles.manualTimeLabel}>{t('taskEditor.durationShort')}</Text>
                   <TextInput
                     onChangeText={setDurationInput}
                     value={durationInput}
-                    placeholder="60"
+                    placeholder={t('taskEditor.durationPlaceholder')}
                     placeholderTextColor="#8E96AC"
                     style={styles.durationInput}
                     keyboardType="number-pad"
@@ -706,7 +709,7 @@ export default function TaskEditorScreen() {
                             styles.durationPillText,
                             selected && { color: theme.primary },
                           ]}>
-                          {value}m
+                          {t('common.minutesShort', { minutes: value })}
                         </Text>
                       </Pressable>
                     );
@@ -716,12 +719,12 @@ export default function TaskEditorScreen() {
 
                 <View style={styles.modalActions}>
                   <Pressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
                   </Pressable>
                   <Pressable
                     onPress={applyPicker}
                     style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
-                    <Text style={styles.primaryButtonText}>Apply</Text>
+                    <Text style={styles.primaryButtonText}>{t('common.apply')}</Text>
                   </Pressable>
                 </View>
               </ScrollView>
@@ -745,7 +748,7 @@ export default function TaskEditorScreen() {
                 style={styles.paletteModalScroll}>
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
                 <View style={styles.paletteModalHeader}>
-                  <Text style={styles.modalTitle}>Choose Category Color</Text>
+                  <Text style={styles.modalTitle}>{t('taskEditor.chooseCategoryColor')}</Text>
                   <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
                     <AppIcon color="#5B6581" name="close" size={20} />
                   </Pressable>
@@ -808,7 +811,7 @@ export default function TaskEditorScreen() {
                   <Pressable
                     onPress={handleSaveCategoryColor}
                     style={[styles.paletteApplyButton, { backgroundColor: theme.primary }]}>
-                    <Text style={styles.primaryButtonText}>Apply</Text>
+                    <Text style={styles.primaryButtonText}>{t('common.apply')}</Text>
                   </Pressable>
                 </View>
               </ScrollView>
@@ -823,16 +826,14 @@ export default function TaskEditorScreen() {
             <View style={styles.deleteConfirmIconWrap}>
               <AppIcon color="#CB3750" name="delete-outline" size={20} />
             </View>
-            <Text style={styles.deleteConfirmTitle}>Delete task?</Text>
-            <Text style={styles.deleteConfirmDescription}>
-              This event will be removed from your schedule and cannot be undone.
-            </Text>
+            <Text style={styles.deleteConfirmTitle}>{t('taskEditor.deleteTaskTitle')}</Text>
+            <Text style={styles.deleteConfirmDescription}>{t('taskEditor.deleteTaskDescription')}</Text>
             <View style={styles.deleteConfirmActions}>
               <Pressable onPress={() => setDeleteConfirmOpen(false)} style={styles.deleteCancelButton}>
-                <Text style={styles.deleteCancelButtonText}>Cancel</Text>
+                <Text style={styles.deleteCancelButtonText}>{t('common.cancel')}</Text>
               </Pressable>
               <Pressable onPress={confirmDeleteTask} style={styles.deleteConfirmButton}>
-                <Text style={styles.deleteConfirmButtonText}>Delete</Text>
+                <Text style={styles.deleteConfirmButtonText}>{t('common.delete')}</Text>
               </Pressable>
             </View>
           </View>

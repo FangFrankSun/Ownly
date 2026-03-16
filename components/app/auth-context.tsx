@@ -5,10 +5,12 @@ import {
   GoogleAuthProvider,
   OAuthProvider,
   createUserWithEmailAndPassword,
+  getRedirectResult,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithCredential,
   signInWithPopup,
+  signInWithRedirect,
   signOut as firebaseSignOut,
   updateProfile,
 } from 'firebase/auth';
@@ -21,6 +23,7 @@ type AuthUser = {
   name: string;
   email: string;
   themeId: string | null;
+  languagePreference?: 'en' | 'zh' | null;
 };
 
 type OAuthProviderId = 'google' | 'facebook' | 'apple' | 'azure';
@@ -68,6 +71,7 @@ function buildFallbackAuthUser(firebaseUser: {
     name: firebaseUser.displayName?.trim() || firebaseUser.email?.split('@')[0] || 'User',
     email: firebaseUser.email ?? '',
     themeId: 'ocean',
+    languagePreference: null,
   };
 }
 
@@ -139,6 +143,16 @@ async function syncSignedInUserProfile(firebaseUser: {
   );
 }
 
+function syncSignedInUserProfileInBackground(firebaseUser: {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+}) {
+  void syncSignedInUserProfile(firebaseUser).catch((error) => {
+    console.error('Failed to sync signed-in user profile', error);
+  });
+}
+
 function buildOAuthCredential(
   providerId: OAuthTokenProviderId,
   idToken?: string,
@@ -166,16 +180,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isHydrated, setIsHydrated] = useState(false);
   const profileUnsubscribeRef = useRef<null | (() => void)>(null);
 
+  const applySignedInUserState = (firebaseUser: {
+    uid: string;
+    displayName: string | null;
+    email: string | null;
+  }) => {
+    setUser(buildFallbackAuthUser(firebaseUser));
+    setIsHydrated(true);
+    syncSignedInUserProfileInBackground(firebaseUser);
+  };
+
   useEffect(() => {
     const firebaseAuth = auth;
     const firestore = db;
+    let hydrationFallback: ReturnType<typeof setTimeout> | null = null;
 
     if (!firebaseAuth || !firestore) {
       setIsHydrated(true);
       return;
     }
 
+    hydrationFallback = setTimeout(() => {
+      setIsHydrated(true);
+    }, 2500);
+
     const unsubscribeAuth = onAuthStateChanged(firebaseAuth, (firebaseUser) => {
+      if (hydrationFallback) {
+        clearTimeout(hydrationFallback);
+        hydrationFallback = null;
+      }
+
       if (profileUnsubscribeRef.current) {
         profileUnsubscribeRef.current();
         profileUnsubscribeRef.current = null;
@@ -195,7 +229,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profileUnsubscribeRef.current = onSnapshot(
         userRef,
         (snapshot) => {
-          const profile = snapshot.data() as { name?: string; themeId?: string; email?: string } | undefined;
+          const profile = snapshot.data() as {
+            name?: string;
+            themeId?: string;
+            email?: string;
+            languagePreference?: 'en' | 'zh' | 'system' | 'es' | null;
+          } | undefined;
           const displayName =
             profile?.name?.trim() ||
             firebaseUser.displayName?.trim() ||
@@ -209,11 +248,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 name: displayName,
                 email: firebaseUser.email ?? '',
                 themeId: 'ocean',
+                languagePreference: null,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
               },
               { merge: true }
-            );
+            ).catch((error) => {
+              console.error('Failed to create initial Firebase user profile', error);
+            });
           }
 
           setUser({
@@ -221,6 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             name: displayName,
             email: firebaseUser.email ?? profile?.email ?? '',
             themeId: profile?.themeId ?? 'ocean',
+            languagePreference: normalizeLanguagePreference(profile?.languagePreference),
           });
         },
         (error) => {
@@ -231,12 +274,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
+      if (hydrationFallback) {
+        clearTimeout(hydrationFallback);
+      }
       unsubscribeAuth();
       if (profileUnsubscribeRef.current) {
         profileUnsubscribeRef.current();
         profileUnsubscribeRef.current = null;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !auth) {
+      return;
+    }
+
+    void getRedirectResult(auth)
+      .then((redirectResult) => {
+        if (redirectResult?.user) {
+          applySignedInUserState(redirectResult.user);
+          syncSignedInUserProfileInBackground(redirectResult.user);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to complete redirected Firebase sign-in', error);
+      });
   }, []);
 
   const signIn: AuthContextValue['signIn'] = async (email, password) => {
@@ -252,7 +315,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      await signInWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
+      const credential = await signInWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
+      applySignedInUserState(credential.user);
       return { ok: true };
     } catch (error) {
       return { ok: false, error: mapFirebaseAuthError(error) };
@@ -299,10 +363,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const normalizedDisplayName = displayName?.trim();
       if (providerId === 'apple.com' && normalizedDisplayName && !result.user.displayName) {
-        await updateProfile(result.user, { displayName: normalizedDisplayName });
+        void updateProfile(result.user, { displayName: normalizedDisplayName }).catch((error) => {
+          console.error('Failed to update Apple display name', error);
+        });
       }
 
-      await syncSignedInUserProfile(result.user);
+      applySignedInUserState(result.user);
 
       return { ok: true };
     } catch (error) {
@@ -342,6 +408,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
+    const currentOrigin = webAuthSupport.currentOrigin ?? '';
+    const isLocalDevOrigin = /^(https?:\/\/)(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(currentOrigin);
+
     const providerInstance =
       provider === 'google'
         ? new GoogleAuthProvider()
@@ -375,18 +444,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           : {
               prompt: 'select_account',
-            }
+          }
       );
     }
 
-    try {
-      const result = await signInWithPopup(auth!, providerInstance);
-      await syncSignedInUserProfile(result.user);
+    if (isLocalDevOrigin) {
+      try {
+        await signInWithRedirect(auth!, providerInstance);
+        return {
+          ok: true,
+          message: 'Redirecting to continue sign-in on localhost...',
+        };
+      } catch (redirectError) {
+        return { ok: false, error: mapFirebaseAuthError(redirectError) };
+      }
+    }
 
+    try {
+      const popupResult = await signInWithPopup(auth!, providerInstance);
+      applySignedInUserState(popupResult.user);
       return { ok: true };
     } catch (error) {
+      const errorCode =
+        typeof error === 'object' && error && 'code' in error ? String((error as { code: string }).code) : '';
+
+      if (
+        errorCode === 'auth/popup-blocked' ||
+        errorCode === 'auth/cancelled-popup-request' ||
+        errorCode === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        try {
+          await signInWithRedirect(auth!, providerInstance);
+          return {
+            ok: true,
+            message: isLocalDevOrigin
+              ? 'Redirecting to continue sign-in on localhost...'
+              : 'Redirecting to continue sign-in...',
+          };
+        } catch (redirectError) {
+          return { ok: false, error: mapFirebaseAuthError(redirectError) };
+        }
+      }
+
+      if (errorCode === 'auth/popup-closed-by-user') {
+        return { ok: false, error: 'Sign-in popup was closed.' };
+      }
+
       return { ok: false, error: mapFirebaseAuthError(error) };
     }
+
   };
 
   const signUp: AuthContextValue['signUp'] = async (name, email, password) => {
@@ -405,19 +511,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const credential = await createUserWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
-      await updateProfile(credential.user, { displayName: normalizedName });
+      applySignedInUserState(credential.user);
 
-      await setDoc(
+      void updateProfile(credential.user, { displayName: normalizedName }).catch((error) => {
+        console.error('Failed to save display name after sign-up', error);
+      });
+
+      void setDoc(
         doc(db!, 'users', credential.user.uid),
         {
           name: normalizedName,
           email: normalizedEmail,
           themeId: 'ocean',
+          languagePreference: null,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
         { merge: true }
-      );
+      ).catch((error) => {
+        console.error('Failed to create profile after sign-up', error);
+      });
 
       return { ok: true };
     } catch (error) {
@@ -456,4 +569,7 @@ export function useAuth() {
   }
 
   return context;
+}
+function normalizeLanguagePreference(value: unknown): AuthUser['languagePreference'] {
+  return value === 'en' || value === 'zh' ? value : null;
 }

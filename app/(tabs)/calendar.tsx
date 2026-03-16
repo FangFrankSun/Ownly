@@ -21,7 +21,9 @@ import Animated, {
   LinearTransition,
 } from 'react-native-reanimated';
 
+import { localizeTaskCategoryName } from '@/components/app/display-text';
 import { AppCard, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
+import { useLanguage } from '@/components/app/language-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 import { AppIcon } from '@/components/ui/app-icon';
@@ -65,20 +67,9 @@ type TimelineEvent = {
   laneCount: number;
 };
 
-const VIEW_MODE_ITEMS: {
-  mode: ViewMode;
-  label: string;
-}[] = [
-  { mode: 'list', label: 'List' },
-  { mode: 'day', label: 'Day' },
-  { mode: 'threeDay', label: '3 Day' },
-  { mode: 'week', label: 'Week' },
-  { mode: 'month', label: 'Month' },
-  { mode: 'year', label: 'Year' },
-];
+const VIEW_MODE_ITEMS: ViewMode[] = ['list', 'day', 'threeDay', 'week', 'month', 'year'];
 const HORIZONTAL_MODE_ITEMS = VIEW_MODE_ITEMS;
 
-const WEEKDAY_SHORT = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 22;
 const MINUTES_IN_DAY = 24 * 60;
@@ -119,15 +110,15 @@ function getDayKey(date: Date) {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-function getWeekView(weekStart: Date): WeekDay[] {
+function getWeekView(weekStart: Date, localeTag: string): WeekDay[] {
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDays(weekStart, index);
     return {
       key: date.toISOString(),
       dayKey: getDayKey(date),
-      day: date.toLocaleDateString(undefined, { weekday: 'short' }),
+      day: date.toLocaleDateString(localeTag, { weekday: 'short' }),
       date: date.getDate(),
-      label: date.toLocaleDateString(undefined, {
+      label: date.toLocaleDateString(localeTag, {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
@@ -154,26 +145,26 @@ function getMonthCells(monthDate: Date): MonthCell[] {
   });
 }
 
-function getWeekRangeLabel(days: WeekDay[]) {
+function getWeekRangeLabel(days: WeekDay[], localeTag: string) {
   if (!days.length) {
     return '';
   }
 
   const startDate = days[0].dateObject;
   const endDate = days[days.length - 1].dateObject;
-  return formatDateRange(startDate, endDate);
+  return formatDateRange(startDate, endDate, localeTag);
 }
 
-function formatHourLabel(hour: number) {
-  const normalized = hour % 12 || 12;
-  const suffix = hour >= 12 ? 'PM' : 'AM';
-  return `${normalized} ${suffix}`;
+function formatHourLabel(hour: number, localeTag: string) {
+  const date = new Date();
+  date.setHours(hour, 0, 0, 0);
+  return date.toLocaleTimeString(localeTag, { hour: 'numeric' });
 }
 
-function formatDateRange(startDate: Date, endDate: Date) {
+function formatDateRange(startDate: Date, endDate: Date, localeTag: string) {
   const sameDay = getDayKey(startDate) === getDayKey(endDate);
   if (sameDay) {
-    return startDate.toLocaleDateString(undefined, {
+    return startDate.toLocaleDateString(localeTag, {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -185,37 +176,41 @@ function formatDateRange(startDate: Date, endDate: Date) {
   const sameYear = startDate.getFullYear() === endDate.getFullYear();
 
   if (sameMonth && sameYear) {
-    return `${startDate.toLocaleDateString(undefined, {
+    return `${startDate.toLocaleDateString(localeTag, {
       month: 'short',
     })} ${startDate.getDate()}-${endDate.getDate()}, ${startDate.getFullYear()}`;
   }
 
-  return `${startDate.toLocaleDateString(undefined, {
+  return `${startDate.toLocaleDateString(localeTag, {
     month: 'short',
     day: 'numeric',
-  })} - ${endDate.toLocaleDateString(undefined, {
+  })} - ${endDate.toLocaleDateString(localeTag, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   })}`;
 }
 
-function getEmptyText(viewMode: ViewMode) {
+function getEmptyText(viewMode: ViewMode, t: (key: string) => string) {
   if (viewMode === 'day' || viewMode === 'threeDay' || viewMode === 'week') {
-    return 'No events in this time range. Add timed tasks in the Tasks tab.';
+    return t('calendar.emptyRange');
   }
   if (viewMode === 'month') {
-    return 'No events on this date. Add timed tasks in the Tasks tab.';
+    return t('calendar.emptyDate');
   }
   if (viewMode === 'year') {
-    return 'No events in this year. Add timed tasks in the Tasks tab.';
+    return t('calendar.emptyYear');
   }
-  return 'No events on this day. Add timed tasks in the Tasks tab.';
+  return t('calendar.emptyDay');
 }
 
-function formatDurationLabel(minutes: number) {
+function formatDurationLabel(
+  minutes: number,
+  _localeTag: string,
+  t: (key: string, vars?: Record<string, string | number>) => string
+) {
   if (!Number.isFinite(minutes) || minutes <= 0) {
-    return 'Duration unknown';
+    return t('calendar.durationUnknown');
   }
   if (minutes % 60 === 0) {
     return `${minutes / 60}h`;
@@ -234,25 +229,30 @@ function getEventEndDate(startDate: Date, durationMinutes: number) {
   return new Date(startDate.getTime() + safeDuration * 60 * 1000);
 }
 
-function formatEventTimeRange(scheduledAt: string, durationMinutes: number) {
+function formatEventTimeRange(scheduledAt: string, durationMinutes: number, localeTag: string, t: (key: string) => string) {
   const startDate = new Date(scheduledAt);
   if (Number.isNaN(startDate.getTime())) {
-    return 'Unknown time';
+    return t('calendar.unknownTime');
   }
   const endDate = getEventEndDate(startDate, durationMinutes);
   const timeOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
-  return `${startDate.toLocaleTimeString(undefined, timeOptions)} - ${endDate.toLocaleTimeString(undefined, timeOptions)}`;
+  return `${startDate.toLocaleTimeString(localeTag, timeOptions)} - ${endDate.toLocaleTimeString(localeTag, timeOptions)}`;
 }
 
-function formatEventDateTimeRange(scheduledAt: string, durationMinutes: number) {
+function formatEventDateTimeRange(
+  scheduledAt: string,
+  durationMinutes: number,
+  localeTag: string,
+  t: (key: string) => string
+) {
   const startDate = new Date(scheduledAt);
   if (Number.isNaN(startDate.getTime())) {
-    return 'Unknown schedule';
+    return t('calendar.unknownSchedule');
   }
-  return `${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${formatEventTimeRange(scheduledAt, durationMinutes)}`;
+  return `${startDate.toLocaleDateString(localeTag, { month: 'short', day: 'numeric' })} · ${formatEventTimeRange(scheduledAt, durationMinutes, localeTag, t)}`;
 }
 
-function buildTimelineDays(mode: ViewMode, focusDate: Date): TimelineDay[] {
+function buildTimelineDays(mode: ViewMode, focusDate: Date, localeTag: string): TimelineDay[] {
   const dayCount = mode === 'day' ? 1 : mode === 'threeDay' ? 3 : mode === 'week' ? 7 : 0;
   if (dayCount === 0) {
     return [];
@@ -264,8 +264,8 @@ function buildTimelineDays(mode: ViewMode, focusDate: Date): TimelineDay[] {
     return {
       key: `${mode}-${date.toISOString()}`,
       dayKey: getDayKey(date),
-      weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
-      shortLabel: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      weekday: date.toLocaleDateString(localeTag, { weekday: 'short' }),
+      shortLabel: date.toLocaleDateString(localeTag, { month: 'short', day: 'numeric' }),
       date,
     };
   });
@@ -326,6 +326,7 @@ function renderViewModeIcon(mode: ViewMode, color: string) {
 }
 
 export default function CalendarScreen() {
+  const { effectiveLanguage, localeTag, t } = useLanguage();
   const router = useRouter();
   const { calendarEvents } = useTasks();
   const { theme } = useAppTheme();
@@ -358,8 +359,8 @@ export default function CalendarScreen() {
     () => addDays(startOfWeek(today), listWeekOffset * 7),
     [listWeekOffset, today]
   );
-  const listWeekDays = useMemo(() => getWeekView(listWeekStartDate), [listWeekStartDate]);
-  const listWeekRangeLabel = useMemo(() => getWeekRangeLabel(listWeekDays), [listWeekDays]);
+  const listWeekDays = useMemo(() => getWeekView(listWeekStartDate, localeTag), [listWeekStartDate, localeTag]);
+  const listWeekRangeLabel = useMemo(() => getWeekRangeLabel(listWeekDays, localeTag), [listWeekDays, localeTag]);
   const selectedListDay = listWeekDays[selectedListDayIndex] ?? listWeekDays[0];
 
   const monthDate = useMemo(() => {
@@ -383,7 +384,20 @@ export default function CalendarScreen() {
     [yearValue]
   );
 
-  const timelineDays = useMemo(() => buildTimelineDays(viewMode, focusDate), [focusDate, viewMode]);
+  const timelineDays = useMemo(() => buildTimelineDays(viewMode, focusDate, localeTag), [focusDate, localeTag, viewMode]);
+  const viewModeItems = useMemo(
+    () => VIEW_MODE_ITEMS.map((mode) => ({ mode, label: t(`calendar.${mode}`) })),
+    [t]
+  );
+  const weekHeaderLabels = useMemo(() => {
+    const anchor = new Date(2024, 0, 7);
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = addDays(anchor, index);
+      return date.toLocaleDateString(localeTag, {
+        weekday: effectiveLanguage === 'zh' ? 'short' : 'narrow',
+      });
+    });
+  }, [effectiveLanguage, localeTag]);
   const timelineDayKeys = useMemo(() => new Set(timelineDays.map((day) => day.dayKey)), [timelineDays]);
   const timelineBounds = useMemo(() => {
     const defaultStartMinutes = DAY_START_HOUR * 60;
@@ -608,12 +622,12 @@ export default function CalendarScreen() {
       return listWeekRangeLabel;
     }
     if (viewMode === 'month') {
-      return monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      return monthDate.toLocaleDateString(localeTag, { month: 'long', year: 'numeric' });
     }
     if (viewMode === 'year') {
       const [year, month, day] = selectedYearDayKey.split('-').map((item) => Number(item));
       const selectedDate = new Date(year, month, day);
-      return selectedDate.toLocaleDateString(undefined, {
+      return selectedDate.toLocaleDateString(localeTag, {
         weekday: 'short',
         month: 'long',
         day: 'numeric',
@@ -623,22 +637,22 @@ export default function CalendarScreen() {
     if (!timelineDays.length) {
       return '';
     }
-    return formatDateRange(timelineDays[0].date, timelineDays[timelineDays.length - 1].date);
-  }, [listWeekRangeLabel, monthDate, selectedYearDayKey, timelineDays, viewMode]);
+    return formatDateRange(timelineDays[0].date, timelineDays[timelineDays.length - 1].date, localeTag);
+  }, [listWeekRangeLabel, localeTag, monthDate, selectedYearDayKey, timelineDays, viewMode]);
 
   const periodLabel = useMemo(() => {
     if (viewMode === 'list') {
-      return selectedListDay?.label ?? 'Selected day';
+      return selectedListDay?.label ?? '';
     }
     if (viewMode === 'month') {
       return selectedMonthCell
-        ? selectedMonthCell.date.toLocaleDateString(undefined, {
+        ? selectedMonthCell.date.toLocaleDateString(localeTag, {
             weekday: 'short',
             month: 'long',
             day: 'numeric',
             year: 'numeric',
           })
-        : monthDate.toLocaleDateString(undefined, {
+        : monthDate.toLocaleDateString(localeTag, {
             month: 'long',
             year: 'numeric',
           });
@@ -646,7 +660,7 @@ export default function CalendarScreen() {
     if (viewMode === 'year') {
       const [year, month, day] = selectedYearDayKey.split('-').map((item) => Number(item));
       const selectedDate = new Date(year, month, day);
-      return selectedDate.toLocaleDateString(undefined, {
+      return selectedDate.toLocaleDateString(localeTag, {
         weekday: 'short',
         month: 'long',
         day: 'numeric',
@@ -656,8 +670,8 @@ export default function CalendarScreen() {
     if (!timelineDays.length) {
       return '';
     }
-    return formatDateRange(timelineDays[0].date, timelineDays[timelineDays.length - 1].date);
-  }, [monthDate, selectedListDay, selectedMonthCell, selectedYearDayKey, timelineDays, viewMode]);
+    return formatDateRange(timelineDays[0].date, timelineDays[timelineDays.length - 1].date, localeTag);
+  }, [localeTag, monthDate, selectedListDay, selectedMonthCell, selectedYearDayKey, timelineDays, viewMode]);
 
   const shiftPeriod = (delta: number) => {
     if (viewMode === 'list') {
@@ -794,19 +808,19 @@ export default function CalendarScreen() {
       <View style={styles.eventText}>
         <Text style={[styles.eventTitle, event.done && styles.eventTitleDone]}>{event.title}</Text>
         <Text style={styles.eventMeta}>
-          {formatEventDateTimeRange(event.scheduledAt, event.durationMinutes)} · {formatDurationLabel(event.durationMinutes)} ·{' '}
-          {event.categoryName}
-          {event.repeatable ? ' · Repeats' : ''}
+          {formatEventDateTimeRange(event.scheduledAt, event.durationMinutes, localeTag, t)} · {formatDurationLabel(event.durationMinutes, localeTag, t)} ·{' '}
+          {localizeTaskCategoryName(event.categoryName, effectiveLanguage)}
+          {event.repeatable ? ` · ${t('calendar.repeats')}` : ''}
         </Text>
         {event.notes ? <Text style={styles.eventNotes}>{event.notes}</Text> : null}
       </View>
       {event.repeatable ? <AppIcon color="#5D6A89" name="repeat" size={16} /> : null}
     </Pressable>
   );
-  const activeModeItem = VIEW_MODE_ITEMS.find((item) => item.mode === viewMode) ?? VIEW_MODE_ITEMS[0];
+  const activeModeItem = viewModeItems.find((item) => item.mode === viewMode) ?? viewModeItems[0];
 
   return (
-    <ScreenShell title="Calendar" subtitle="Your task events are auto-synced here.">
+    <ScreenShell title={t('calendar.title')} subtitle={t('calendar.subtitle')}>
       <AppCard delay={90}>
         <View style={styles.headerArea}>
           <View style={styles.modeRow}>
@@ -829,13 +843,14 @@ export default function CalendarScreen() {
                     style={styles.modeMenuScroll}
                     contentContainerStyle={styles.modeMenuScrollContent}
                     showsHorizontalScrollIndicator={false}>
-                    {HORIZONTAL_MODE_ITEMS.map((item) => {
-                      const selected = item.mode === viewMode;
+                    {HORIZONTAL_MODE_ITEMS.map((mode) => {
+                      const item = viewModeItems.find((candidate) => candidate.mode === mode);
+                      const selected = mode === viewMode;
 
                       return (
                         <Pressable
-                          key={item.mode}
-                          onPress={() => selectViewMode(item.mode)}
+                          key={mode}
+                          onPress={() => selectViewMode(mode)}
                           style={[
                             styles.modePill,
                             selected && {
@@ -843,13 +858,13 @@ export default function CalendarScreen() {
                               borderColor: `${theme.primary}66`,
                             },
                             ]}>
-                          {renderViewModeIcon(item.mode, selected ? theme.primary : '#415072')}
+                          {renderViewModeIcon(mode, selected ? theme.primary : '#415072')}
                           <Text
                             style={[
                               styles.modePillLabel,
                               selected && { color: theme.primary, fontWeight: '800' },
                             ]}>
-                            {item.label}
+                            {item?.label ?? t(`calendar.${mode}`)}
                           </Text>
                         </Pressable>
                       );
@@ -924,10 +939,10 @@ export default function CalendarScreen() {
                     },
                   ]}>
                   <Text style={[styles.dayModeSingleWeekday, { color: theme.primary }]}>
-                    {focusDate.toLocaleDateString(undefined, { weekday: 'short' })}
+                    {focusDate.toLocaleDateString(localeTag, { weekday: 'short' })}
                   </Text>
                   <Text style={styles.dayModeSingleDate}>
-                    {focusDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    {focusDate.toLocaleDateString(localeTag, { month: 'short', day: 'numeric' })}
                   </Text>
                 </View>
               </View>
@@ -967,7 +982,7 @@ export default function CalendarScreen() {
                   <Text
                     key={`label-${hour}`}
                     style={[styles.timeRailText, { top: index * TIMELINE_HOUR_HEIGHT - 8 }]}>
-                    {formatHourLabel(hour)}
+                    {formatHourLabel(hour, localeTag)}
                   </Text>
                 ))}
               </View>
@@ -1025,7 +1040,7 @@ export default function CalendarScreen() {
                               {event.title}
                             </Text>
                             <Text numberOfLines={1} style={styles.timelineEventMeta}>
-                              {formatEventTimeRange(event.scheduledAt, event.durationMinutes)}
+                              {formatEventTimeRange(event.scheduledAt, event.durationMinutes, localeTag, t)}
                             </Text>
                           </Pressable>
                         );
@@ -1056,11 +1071,11 @@ export default function CalendarScreen() {
             ]}>
             <View style={styles.monthHeaderRow}>
               <Text style={styles.monthHeaderTitle}>
-                {monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                {monthDate.toLocaleDateString(localeTag, { month: 'long', year: 'numeric' })}
               </Text>
               {selectedMonthCell ? (
                 <Text style={[styles.monthHeaderSubtitle, { color: theme.secondary }]}>
-                  {selectedMonthCell.date.toLocaleDateString(undefined, {
+                  {selectedMonthCell.date.toLocaleDateString(localeTag, {
                     weekday: 'short',
                     month: 'short',
                     day: 'numeric',
@@ -1069,7 +1084,7 @@ export default function CalendarScreen() {
               ) : null}
             </View>
             <View style={styles.gridWeekHeader}>
-              {WEEKDAY_SHORT.map((label) => (
+              {weekHeaderLabels.map((label) => (
                 <Text key={label} style={styles.gridWeekLabel}>
                   {label}
                 </Text>
@@ -1130,10 +1145,10 @@ export default function CalendarScreen() {
               return (
                 <View key={month.toISOString()} style={[styles.yearMonthCard, { width: yearCardWidth }]}>
                   <Text style={styles.yearMonthTitle}>
-                    {month.toLocaleDateString(undefined, { month: 'short' })}
+                    {month.toLocaleDateString(localeTag, { month: 'short' })}
                   </Text>
                   <View style={styles.miniWeekHeader}>
-                    {WEEKDAY_SHORT.map((label) => (
+                    {weekHeaderLabels.map((label) => (
                       <Text key={`${month.toISOString()}-${label}`} style={styles.miniWeekLabel}>
                         {label}
                       </Text>
@@ -1181,26 +1196,26 @@ export default function CalendarScreen() {
       {viewMode === 'list' || viewMode === 'month' || viewMode === 'year' ? (
         <>
           <AppCard delay={160}>
-            <SectionLabel text="To-Do List" />
+            <SectionLabel text={t('tasks.todo')} />
             <Text style={styles.selectedDayText}>{periodLabel}</Text>
 
             {activePeriodEvents.length === 0 && completedPeriodEvents.length === 0 ? (
-              <Text style={styles.emptyText}>{getEmptyText(viewMode)}</Text>
+              <Text style={styles.emptyText}>{getEmptyText(viewMode, t)}</Text>
             ) : activePeriodEvents.length === 0 ? (
-              <Text style={styles.emptyText}>No active events for this period.</Text>
+              <Text style={styles.emptyText}>{t('calendar.emptyRange')}</Text>
             ) : null}
             {activePeriodEvents.map((event) => renderEventRow(event, false))}
           </AppCard>
 
           <AppCard delay={190}>
             <View style={styles.completedHeaderRow}>
-              <SectionLabel text="Completed" />
+              <SectionLabel text={t('tasks.completed')} />
               <Pressable
                 disabled={isAnimatingCompletedToggle.current}
                 onPress={toggleCompletedEventsVisibility}
                 style={[styles.completedEventsToggle, { borderColor: `${theme.primary}33` }]}>
                 <Text style={[styles.completedEventsToggleText, { color: theme.primary }]}>
-                  {showCompletedEvents ? 'Hide' : 'Show All'} ({completedPeriodEvents.length})
+                  {showCompletedEvents ? t('common.hide') : t('common.show')} ({completedPeriodEvents.length})
                 </Text>
                 <AppIcon
                   color={theme.primary}
@@ -1221,10 +1236,10 @@ export default function CalendarScreen() {
                   </Animated.View>
                 ))
               ) : showCompletedEvents ? (
-                <Text style={styles.completedEventsEmpty}>No completed events for this period.</Text>
+                <Text style={styles.completedEventsEmpty}>{t('calendar.noCompletedEvents')}</Text>
               ) : showCompletedEventsHiddenHint ? (
                 <Animated.View entering={FadeIn.duration(170).easing(Easing.out(Easing.quad))}>
-                  <Text style={styles.completedCollapsedHint}>Completed tasks are hidden.</Text>
+                  <Text style={styles.completedCollapsedHint}>{t('calendar.completedHidden')}</Text>
                 </Animated.View>
               ) : null}
             </View>
@@ -1243,14 +1258,16 @@ export default function CalendarScreen() {
                 ]}
               />
               <View style={styles.detailHeadingBlock}>
-                <Text style={styles.detailTitle}>{selectedEvent?.title ?? 'Event'}</Text>
+                <Text style={styles.detailTitle}>{selectedEvent?.title ?? t('calendar.eventFallbackTitle')}</Text>
                 <View style={styles.detailTagRow}>
                   <View style={styles.detailTag}>
-                    <Text style={styles.detailTagText}>{selectedEvent?.categoryName ?? 'Uncategorized'}</Text>
+                    <Text style={styles.detailTagText}>
+                      {localizeTaskCategoryName(selectedEvent?.categoryName ?? t('calendar.uncategorized'), effectiveLanguage)}
+                    </Text>
                   </View>
                   {selectedEvent?.repeatable ? (
                     <View style={styles.detailTag}>
-                      <Text style={styles.detailTagText}>Repeats</Text>
+                      <Text style={styles.detailTagText}>{t('calendar.repeats')}</Text>
                     </View>
                   ) : null}
                 </View>
@@ -1265,14 +1282,14 @@ export default function CalendarScreen() {
                 <AppIcon color="#667291" name="schedule" size={16} />
                 <Text style={styles.detailInfoText}>
                   {selectedEvent
-                    ? formatEventDateTimeRange(selectedEvent.scheduledAt, selectedEvent.durationMinutes)
+                    ? formatEventDateTimeRange(selectedEvent.scheduledAt, selectedEvent.durationMinutes, localeTag, t)
                     : ''}
                 </Text>
               </View>
               <View style={styles.detailInfoRow}>
                 <AppIcon color="#667291" name="timelapse" size={16} />
                 <Text style={styles.detailInfoText}>
-                  {selectedEvent ? formatDurationLabel(selectedEvent.durationMinutes) : ''}
+                  {selectedEvent ? formatDurationLabel(selectedEvent.durationMinutes, localeTag, t) : ''}
                 </Text>
               </View>
               {selectedEvent?.notes ? (
@@ -1280,19 +1297,19 @@ export default function CalendarScreen() {
                   <Text style={styles.detailNotes}>{selectedEvent.notes}</Text>
                 </View>
               ) : (
-                <Text style={styles.detailNotesMuted}>No notes</Text>
+                <Text style={styles.detailNotesMuted}>{t('common.noNotes')}</Text>
               )}
             </View>
 
             <View style={styles.detailActions}>
               <Pressable onPress={() => setSelectedEvent(null)} style={styles.detailActionGhost}>
-                <Text style={styles.detailActionGhostText}>Close</Text>
+                <Text style={styles.detailActionGhostText}>{t('common.close')}</Text>
               </Pressable>
               <Pressable
                 onPress={handleEditSelectedEvent}
                 style={[styles.detailActionPrimary, { backgroundColor: theme.primary }]}>
                 <AppIcon color="#FFFFFF" name="edit" size={16} />
-                <Text style={styles.detailActionPrimaryText}>Edit Event</Text>
+                <Text style={styles.detailActionPrimaryText}>{t('calendar.editEvent')}</Text>
               </Pressable>
             </View>
           </Pressable>

@@ -2,13 +2,15 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/components/app/auth-context';
+import { LanguageProvider } from '@/components/app/language-context';
 import { TasksProvider } from '@/components/app/tasks-context';
 import { ThemeProvider as AppThemeProvider, useAppTheme } from '@/components/app/theme-context';
+import { WellnessProvider } from '@/components/app/wellness-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
@@ -21,8 +23,21 @@ export default function RootLayout() {
     material: require('../assets/fonts/MaterialIcons.ttf'),
     'material-community': require('../assets/fonts/MaterialCommunityIcons.ttf'),
   });
+  const [fontLoadTimedOut, setFontLoadTimedOut] = useState(false);
 
-  if (!fontsLoaded) {
+  useEffect(() => {
+    if (fontsLoaded) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setFontLoadTimedOut(true);
+    }, 2000);
+
+    return () => clearTimeout(timeout);
+  }, [fontsLoaded]);
+
+  if (Platform.OS !== 'web' && !fontsLoaded && !fontLoadTimedOut) {
     return (
       <View
         style={{
@@ -39,21 +54,25 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AuthProvider>
-        <AppThemeProvider>
-          <TasksProvider>
-            <AuthGate />
-            <Stack>
-              <Stack.Screen name="login" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="task-editor"
-                options={{ presentation: 'modal', headerShown: false }}
-              />
-              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            </Stack>
-            <StatusBar style="auto" />
-          </TasksProvider>
-        </AppThemeProvider>
+        <LanguageProvider>
+          <AppThemeProvider>
+            <TasksProvider>
+              <WellnessProvider>
+                <AuthGate />
+                <Stack>
+                  <Stack.Screen name="login" options={{ headerShown: false }} />
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen
+                    name="task-editor"
+                    options={{ presentation: 'modal', headerShown: false }}
+                  />
+                  <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+                </Stack>
+                <StatusBar style="auto" />
+              </WellnessProvider>
+            </TasksProvider>
+          </AppThemeProvider>
+        </LanguageProvider>
       </AuthProvider>
     </ThemeProvider>
   );
@@ -79,12 +98,12 @@ function AuthGate() {
     }
 
     if (isAuthenticated && inLoginScreen) {
-      router.replace('/(tabs)/tasks');
+      router.replace('/dashboard');
       return;
     }
 
     if (isAuthenticated && inRootPath) {
-      router.replace('/(tabs)/tasks');
+      router.replace('/dashboard');
     }
   }, [isAuthenticated, isHydrated, pathname, router]);
 

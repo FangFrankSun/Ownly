@@ -3,16 +3,19 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '@/components/app/auth-context';
+import { type LanguagePreference, useLanguage } from '@/components/app/language-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const { effectiveLanguage, languagePreference, setLanguagePreference, t } = useLanguage();
   const { theme, themes, setThemeById } = useAppTheme();
   const [reminders, setReminders] = useState(true);
   const [sync, setSync] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
+  const selectedLanguage = languagePreference ?? effectiveLanguage;
 
   const onSignOut = async () => {
     await signOut();
@@ -20,20 +23,20 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScreenShell title="Settings" subtitle="Personalize your experience.">
+    <ScreenShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
       <AppCard delay={90}>
-        <SectionLabel text="Profile" />
-        <CardTitle accent={theme.secondary} icon="person" title="You" />
-        <Text style={styles.name}>{user?.name ?? 'User'}</Text>
-        <Text style={styles.email}>{user?.email ?? 'unknown@example.com'}</Text>
+        <SectionLabel text={t('settings.profile')} />
+        <CardTitle accent={theme.secondary} icon="person" title={t('settings.you')} />
+        <Text style={styles.name}>{user?.name ?? t('common.user')}</Text>
+        <Text style={styles.email}>{user?.email ?? t('common.unknownEmail')}</Text>
         <Pressable onPress={onSignOut} style={[styles.logoutButton, { backgroundColor: `${theme.primary}20` }]}>
-          <Text style={[styles.logoutButtonText, { color: theme.primary }]}>Log Out</Text>
+          <Text style={[styles.logoutButtonText, { color: theme.primary }]}>{t('settings.logout')}</Text>
         </Pressable>
       </AppCard>
 
       <AppCard delay={160}>
-        <SectionLabel text="Theme" />
-        <CardTitle accent={theme.primary} icon="palette" title="Choose Look" />
+        <SectionLabel text={t('settings.theme')} />
+        <CardTitle accent={theme.primary} icon="palette" title={t('settings.chooseLook')} />
         <View style={styles.themeGrid}>
           {themes.map((option) => {
             const selected = option.id === theme.id;
@@ -51,7 +54,7 @@ export default function SettingsScreen() {
                   <View style={[styles.themeSwatch, { backgroundColor: option.secondary }]} />
                   <View style={[styles.themeSwatch, { backgroundColor: option.orbA }]} />
                 </View>
-                <Text style={styles.themeName}>{option.name}</Text>
+                <Text style={styles.themeName}>{t(`theme.${option.id}`)}</Text>
               </Pressable>
             );
           })}
@@ -59,24 +62,53 @@ export default function SettingsScreen() {
       </AppCard>
 
       <AppCard delay={220}>
-        <SectionLabel text="Preferences" />
+        <SectionLabel text={t('settings.preferences')} />
         <SettingRow
-          label="Daily reminders"
+          label={t('settings.dailyReminders')}
           value={reminders}
           onChange={setReminders}
           accentColor={theme.primary}
         />
-        <SettingRow label="Cloud sync" value={sync} onChange={setSync} accentColor={theme.primary} />
+        <SettingRow label={t('settings.cloudSync')} value={sync} onChange={setSync} accentColor={theme.primary} />
         <SettingRow
-          label="Focus mode by default"
+          label={t('settings.focusMode')}
           value={focusMode}
           onChange={setFocusMode}
           accentColor={theme.primary}
         />
       </AppCard>
+
+      <AppCard delay={280}>
+        <SectionLabel text={t('settings.language')} />
+        <CardTitle accent={theme.primary} icon="language" title={t('settings.languageTitle')} />
+        <Text style={styles.languageHint}>{t('settings.languageHint')}</Text>
+        <View style={styles.languageGrid}>
+          {LANGUAGE_OPTIONS.map((option) => {
+            const selected = option.id === selectedLanguage;
+            return (
+              <Pressable
+                key={option.id}
+                onPress={() => setLanguagePreference(option.id)}
+                style={[
+                  styles.languageCard,
+                  selected && styles.languageCardActive,
+                  selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}10` },
+                ]}>
+                <Text style={[styles.languageTitle, selected && { color: theme.primary }]}>{t(option.labelKey)}</Text>
+                <Text style={styles.languageMeta}>{option.id === 'en' ? 'EN' : '中文'}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </AppCard>
     </ScreenShell>
   );
 }
+
+const LANGUAGE_OPTIONS: { id: NonNullable<LanguagePreference>; labelKey: string }[] = [
+  { id: 'en', labelKey: 'language.english' },
+  { id: 'zh', labelKey: 'language.chinese' },
+];
 
 function SettingRow({
   label,
@@ -184,5 +216,41 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1A2133',
     maxWidth: '74%',
+  },
+  languageHint: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#66708B',
+    fontWeight: '600',
+  },
+  languageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  languageCard: {
+    width: '48%',
+    minWidth: 140,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D6DDEC',
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 4,
+  },
+  languageCardActive: {
+    borderWidth: 2,
+    backgroundColor: '#FFFFFF',
+  },
+  languageTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1A2133',
+  },
+  languageMeta: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#76809A',
   },
 });

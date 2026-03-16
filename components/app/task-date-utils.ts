@@ -1,6 +1,6 @@
-export function formatTaskDateTime(iso: string) {
+export function formatTaskDateTime(iso: string, localeTag?: string) {
   const date = new Date(iso);
-  return date.toLocaleString(undefined, {
+  return date.toLocaleString(localeTag, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -8,17 +8,17 @@ export function formatTaskDateTime(iso: string) {
   });
 }
 
-export function formatTaskTime(iso: string) {
+export function formatTaskTime(iso: string, localeTag?: string) {
   const date = new Date(iso);
-  return date.toLocaleTimeString(undefined, {
+  return date.toLocaleTimeString(localeTag, {
     hour: 'numeric',
     minute: '2-digit',
   });
 }
 
-export function formatTaskDate(iso: string) {
+export function formatTaskDate(iso: string, localeTag?: string) {
   const date = new Date(iso);
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleDateString(localeTag, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
