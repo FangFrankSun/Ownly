@@ -38,15 +38,21 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="health"
+        options={{
+          title: t('tabs.health'),
+        }}
+      />
+      <Tabs.Screen
         name="exercise"
         options={{
-          title: t('tabs.exercise'),
+          href: null,
         }}
       />
       <Tabs.Screen
         name="diet"
         options={{
-          title: t('tabs.diet'),
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -63,8 +69,7 @@ const TAB_ICONS = {
   dashboard: 'square.grid.2x2.fill',
   tasks: 'checkmark.circle.fill',
   calendar: 'calendar',
-  exercise: 'figure.run',
-  diet: 'leaf.fill',
+  health: 'figure.run',
   settings: 'gearshape.fill',
 } as const;
 
@@ -87,52 +92,54 @@ function OwnlyTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
         },
       ]}>
       <View style={styles.tabRow}>
-        {state.routes.map((route, index) => {
-          const descriptor = descriptors[route.key];
-          const label =
-            typeof descriptor.options.tabBarLabel === 'string'
-              ? descriptor.options.tabBarLabel
-              : typeof descriptor.options.title === 'string'
-                ? descriptor.options.title
-                : route.name;
-          const isFocused = state.index === index;
-          const tintColor = isFocused ? activeTintColor : inactiveTintColor;
+        {state.routes
+          .filter((route) => route.name in TAB_ICONS)
+          .map((route) => {
+            const descriptor = descriptors[route.key];
+            const label =
+              typeof descriptor.options.tabBarLabel === 'string'
+                ? descriptor.options.tabBarLabel
+                : typeof descriptor.options.title === 'string'
+                  ? descriptor.options.title
+                  : route.name;
+            const isFocused = state.routes[state.index]?.key === route.key;
+            const tintColor = isFocused ? activeTintColor : inactiveTintColor;
 
-          const onPress = () => {
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
+            const onPress = () => {
+              const event = navigation.emit({
+                type: 'tabPress',
+                target: route.key,
+                canPreventDefault: true,
+              });
 
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name as never);
-            }
-          };
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name as never);
+              }
+            };
 
-          const onLongPress = () => {
-            navigation.emit({
-              type: 'tabLongPress',
-              target: route.key,
-            });
-          };
+            const onLongPress = () => {
+              navigation.emit({
+                type: 'tabLongPress',
+                target: route.key,
+              });
+            };
 
-          return (
-            <Pressable
-              key={route.key}
-              accessibilityLabel={descriptor.options.tabBarAccessibilityLabel ?? `${label} tab`}
-              accessibilityRole="button"
-              accessibilityState={isFocused ? { selected: true } : {}}
-              hitSlop={10}
-              onLongPress={onLongPress}
-              onPress={onPress}
-              style={styles.tabButton}
-              testID={descriptor.options.tabBarButtonTestID ?? `tab-${route.name}`}>
-              <IconSymbol color={tintColor} name={TAB_ICONS[route.name as keyof typeof TAB_ICONS]} size={26} />
-              <Text style={[styles.tabLabel, { color: tintColor }]}>{label}</Text>
-            </Pressable>
-          );
-        })}
+            return (
+              <Pressable
+                key={route.key}
+                accessibilityLabel={descriptor.options.tabBarAccessibilityLabel ?? `${label} tab`}
+                accessibilityRole="button"
+                accessibilityState={isFocused ? { selected: true } : {}}
+                hitSlop={10}
+                onLongPress={onLongPress}
+                onPress={onPress}
+                style={styles.tabButton}
+                testID={descriptor.options.tabBarButtonTestID ?? `tab-${route.name}`}>
+                <IconSymbol color={tintColor} name={TAB_ICONS[route.name as keyof typeof TAB_ICONS]} size={26} />
+                <Text style={[styles.tabLabel, { color: tintColor }]}>{label}</Text>
+              </Pressable>
+            );
+          })}
       </View>
     </View>
   );

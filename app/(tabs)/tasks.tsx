@@ -98,7 +98,7 @@ export default function TasksScreen() {
     }
 
     if (taskDone) {
-      toggleTaskDone(taskId);
+      void toggleTaskDone(taskId);
       return;
     }
 
@@ -114,11 +114,16 @@ export default function TasksScreen() {
         return;
       }
 
-      toggleTaskDone(taskId);
-      setCompletingTaskId(null);
-      setShowCompleted(true);
-      setShowCompletedHiddenHint(false);
-      setPendingCompletedScroll(true);
+      void toggleTaskDone(taskId).then((result) => {
+        setCompletingTaskId(null);
+        if (!result.ok) {
+          return;
+        }
+
+        setShowCompleted(true);
+        setShowCompletedHiddenHint(false);
+        setPendingCompletedScroll(true);
+      });
     });
   };
   const clearCompletedSequenceTimer = () => {

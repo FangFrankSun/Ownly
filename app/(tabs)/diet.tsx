@@ -309,6 +309,7 @@ export default function DietScreen() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [isEditingTarget, setIsEditingTarget] = useState(false);
   const isChinese = effectiveLanguage === 'zh';
+  const calorieUnit = isChinese ? '千卡' : 'kcal';
   const isCompactMobile = width < 430;
 
   useEffect(() => {
@@ -504,9 +505,9 @@ export default function DietScreen() {
       <AppCard delay={80}>
         <SectionLabel text={t('diet.caloriesLeft')} />
         <CardTitle accent="#2CB67D" icon="restaurant-menu" title={t('diet.title')} />
-        <Text style={styles.bigKcal}>{dietSummary.consumedCalories} / {dietSummary.targetCalories} kcal</Text>
+        <Text style={styles.bigKcal}>{dietSummary.consumedCalories} / {dietSummary.targetCalories} {calorieUnit}</Text>
         <View style={styles.progressMetaRow}>
-          <Text style={styles.progressMeta}>{`${remainingCalories} kcal`}</Text>
+          <Text style={styles.progressMeta}>{`${remainingCalories} ${calorieUnit}`}</Text>
           <Text style={styles.progressMeta}>{progressPercent}%</Text>
         </View>
         <View style={styles.progressTrack}>
@@ -612,7 +613,7 @@ export default function DietScreen() {
                     </View>
                     <View style={styles.foodCopy}>
                       <Text style={[styles.foodName, selected && { color: theme.primary }]}>{displayName}</Text>
-                      <Text style={styles.foodMeta}>{food.calories} kcal / {servingLabel}</Text>
+                      <Text style={styles.foodMeta}>{food.calories} {calorieUnit} / {servingLabel}</Text>
                     </View>
                     <View style={styles.foodActions}>
                       <Text style={styles.foodMacroMeta}>
@@ -716,7 +717,7 @@ export default function DietScreen() {
           <View key={group.meal.id} style={styles.mealSection}>
             <View style={styles.mealSectionHeader}>
               <Text style={styles.mealSectionTitle}>{mealLabel(group.meal.id)}</Text>
-              <Text style={styles.mealSectionMeta}>{group.entries.reduce((sum, entry) => sum + entry.calories, 0)} kcal</Text>
+              <Text style={styles.mealSectionMeta}>{group.entries.reduce((sum, entry) => sum + entry.calories, 0)} {calorieUnit}</Text>
             </View>
             {group.entries.map((entry) => {
               const template = entry.foodTemplateId
@@ -732,7 +733,7 @@ export default function DietScreen() {
                     <Text style={styles.loggedMeta}>
                       {isChinese
                         ? `${entry.calories} 千卡 · ${entry.servings} 份 × ${servingLabel}`
-                        : `${entry.calories} kcal · ${entry.servings} x ${servingLabel}`}
+                        : `${entry.calories} ${calorieUnit} · ${entry.servings} x ${servingLabel}`}
                     </Text>
                     <Text style={styles.loggedMeta}>
                       {isChinese

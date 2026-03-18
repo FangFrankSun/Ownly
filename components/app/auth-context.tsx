@@ -16,7 +16,7 @@ import {
 } from 'firebase/auth';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-import { auth, db, getWebFirebaseAuthSupport, isFirebaseConfigured } from './firebase-client';
+import { auth, db, getWebFirebaseAuthSupport, isFirebaseConfigured, waitForAuthReady } from './firebase-client';
 
 type AuthUser = {
   id: string;
@@ -113,6 +113,10 @@ function mapFirebaseAuthError(error: unknown) {
     default:
       return message || 'Authentication failed. Please try again.';
   }
+}
+
+function readFirebaseAuthErrorCode(error: unknown) {
+  return typeof error === 'object' && error && 'code' in error ? String((error as { code: string }).code) : '';
 }
 
 function ensureFirebaseConfigured(): AuthFailure | null {
@@ -286,11 +290,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS !== 'web' || !auth) {
+    const firebaseAuth = auth;
+
+    if (Platform.OS !== 'web' || !firebaseAuth) {
       return;
     }
 
-    void getRedirectResult(auth)
+    void waitForAuthReady()
+      .then(() => getRedirectResult(firebaseAuth))
       .then((redirectResult) => {
         if (redirectResult?.user) {
           applySignedInUserState(redirectResult.user);
@@ -315,6 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      await waitForAuthReady();
       const credential = await signInWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
       applySignedInUserState(credential.user);
       return { ok: true };
@@ -358,6 +366,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      await waitForAuthReady();
       const credential = buildOAuthCredential(providerId, normalizedIdToken, normalizedAccessToken, normalizedRawNonce);
       const result = await signInWithCredential(auth!, credential);
 
@@ -448,51 +457,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
     }
 
-    if (isLocalDevOrigin) {
+    try {
+      await waitForAuthReady();
+      const popupResult = await signInWithPopup(auth!, providerInstance);
+      applySignedInUserState(popupResult.user);
+      return { ok: true };
+    } catch (popupError) {
+      const popupErrorCode = readFirebaseAuthErrorCode(popupError);
+      const shouldFallbackToRedirect =
+        popupErrorCode === 'auth/popup-blocked' ||
+        popupErrorCode === 'auth/operation-not-supported-in-this-environment' ||
+        popupErrorCode === 'auth/web-storage-unsupported';
+
+      if (!shouldFallbackToRedirect) {
+        return { ok: false, error: mapFirebaseAuthError(popupError) };
+      }
+
       try {
         await signInWithRedirect(auth!, providerInstance);
         return {
           ok: true,
-          message: 'Redirecting to continue sign-in on localhost...',
+          message: isLocalDevOrigin
+            ? 'Redirecting to continue sign-in on localhost...'
+            : 'Redirecting to continue sign-in...',
         };
       } catch (redirectError) {
         return { ok: false, error: mapFirebaseAuthError(redirectError) };
       }
     }
-
-    try {
-      const popupResult = await signInWithPopup(auth!, providerInstance);
-      applySignedInUserState(popupResult.user);
-      return { ok: true };
-    } catch (error) {
-      const errorCode =
-        typeof error === 'object' && error && 'code' in error ? String((error as { code: string }).code) : '';
-
-      if (
-        errorCode === 'auth/popup-blocked' ||
-        errorCode === 'auth/cancelled-popup-request' ||
-        errorCode === 'auth/operation-not-supported-in-this-environment'
-      ) {
-        try {
-          await signInWithRedirect(auth!, providerInstance);
-          return {
-            ok: true,
-            message: isLocalDevOrigin
-              ? 'Redirecting to continue sign-in on localhost...'
-              : 'Redirecting to continue sign-in...',
-          };
-        } catch (redirectError) {
-          return { ok: false, error: mapFirebaseAuthError(redirectError) };
-        }
-      }
-
-      if (errorCode === 'auth/popup-closed-by-user') {
-        return { ok: false, error: 'Sign-in popup was closed.' };
-      }
-
-      return { ok: false, error: mapFirebaseAuthError(error) };
-    }
-
   };
 
   const signUp: AuthContextValue['signUp'] = async (name, email, password) => {
@@ -510,6 +502,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      await waitForAuthReady();
       const credential = await createUserWithEmailAndPassword(auth!, normalizedEmail, normalizedPassword);
       applySignedInUserState(credential.user);
 

@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "ownly-auth",
     "public": "dist",
     "ignore": [
       "firebase.json",

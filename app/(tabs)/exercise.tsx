@@ -352,6 +352,7 @@ export default function ExerciseScreen() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [isEditingSetup, setIsEditingSetup] = useState(false);
   const isChinese = effectiveLanguage === 'zh';
+  const calorieUnit = isChinese ? '千卡' : 'kcal';
   const isCompactMobile = width < 430;
 
   useEffect(() => {
@@ -448,7 +449,7 @@ export default function ExerciseScreen() {
       categoryId: selectedExercise?.categoryId ?? 'custom',
       durationMinutes,
       calories: previewCalories,
-      metLabel: selectedExercise ? `MET ${selectedExercise.met.toFixed(1)}` : 'Custom kcal/h',
+      metLabel: selectedExercise ? `MET ${selectedExercise.met.toFixed(1)}` : isChinese ? '自定义 千卡/小时' : 'Custom kcal/h',
       caloriesPerHour,
       exerciseTemplateId: selectedExercise?.id ?? null,
     };
@@ -479,7 +480,7 @@ export default function ExerciseScreen() {
       <AppCard delay={90}>
         <SectionLabel text={t('exercise.dailyBurn')} />
         <CardTitle accent={theme.primary} icon="local-fire-department" title={t('exercise.todayBurned')} />
-        <Text style={styles.bigNumber}>{todayExerciseCalories} kcal</Text>
+        <Text style={styles.bigNumber}>{todayExerciseCalories} {calorieUnit}</Text>
         <View style={styles.goalRow}>
           <Text style={styles.goalText}>{t('exercise.goal', { goal: exerciseGoalCalories })}</Text>
           <Text style={styles.goalText}>{goalPercent}%</Text>
@@ -678,7 +679,7 @@ export default function ExerciseScreen() {
 
         <View style={styles.logSummaryRow}>
           <Text style={styles.logSummaryText}>{t('exercise.sessionEstimate')}</Text>
-          <Text style={[styles.logSummaryText, styles.logSummaryStrong]}>{previewCalories} kcal</Text>
+          <Text style={[styles.logSummaryText, styles.logSummaryStrong]}>{previewCalories} {calorieUnit}</Text>
         </View>
 
         <Pressable
@@ -712,7 +713,7 @@ export default function ExerciseScreen() {
                 </Text>
               </View>
               <View style={styles.loggedActions}>
-                <Text style={[styles.loggedCalories, { color: theme.primary }]}>{session.calories} kcal</Text>
+                <Text style={[styles.loggedCalories, { color: theme.primary }]}>{session.calories} {calorieUnit}</Text>
                 <View style={styles.loggedButtonsRow}>
                   <Pressable
                     onPress={() => beginEditSession(session.id)}

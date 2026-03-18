@@ -117,7 +117,7 @@ function buildCardRows(cardIds: DashboardCardId[]) {
 
 export default function DashboardScreen() {
   const { width } = useWindowDimensions();
-  const { localeTag, t } = useLanguage();
+  const { effectiveLanguage, localeTag, t } = useLanguage();
   const { theme } = useAppTheme();
   const { tasks } = useTasks();
   const {
@@ -134,6 +134,9 @@ export default function DashboardScreen() {
   const [isEditingCards, setIsEditingCards] = useState(false);
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
   const [weatherMessage, setWeatherMessage] = useState(t('dashboard.weather.loading'));
+  const isChinese = effectiveLanguage === 'zh';
+  const calorieUnit = isChinese ? '千卡' : 'kcal';
+  const waterUnit = isChinese ? '毫升' : 'ml';
 
   useEffect(() => {
     let isActive = true;
@@ -326,7 +329,7 @@ export default function DashboardScreen() {
 
           {cardId === 'exercise' ? (
             <>
-              <Text style={styles.metricValue}>{todayExerciseCalories} kcal</Text>
+              <Text style={styles.metricValue}>{todayExerciseCalories} {calorieUnit}</Text>
               <Text style={styles.metricMeta}>{t('dashboard.exercise.meta', { sessions: todayExerciseSessions.length, goal: exerciseGoalCalories })}</Text>
               <View style={styles.progressRow}>
                 <View style={styles.inlineTrack}>
@@ -339,7 +342,7 @@ export default function DashboardScreen() {
 
           {cardId === 'diet' ? (
             <>
-              <Text style={styles.metricValue}>{remainingCalories} kcal</Text>
+              <Text style={styles.metricValue}>{remainingCalories} {calorieUnit}</Text>
               <Text style={styles.metricMeta}>{t('dashboard.diet.meta', { consumed: dietSummary.consumedCalories, target: dietSummary.targetCalories })}</Text>
               <View style={styles.progressRow}>
                 <View style={styles.inlineTrack}>
@@ -365,7 +368,7 @@ export default function DashboardScreen() {
 
           {cardId === 'hydration' ? (
             <>
-              <Text style={styles.metricValue}>{dietSummary.waterMl} ml</Text>
+              <Text style={styles.metricValue}>{dietSummary.waterMl} {waterUnit}</Text>
               <Text style={styles.metricMeta}>{t('dashboard.hydration.meta1')}</Text>
               <Text style={styles.metricMeta}>{t('dashboard.hydration.meta2', { remaining: Math.max(0, 2200 - dietSummary.waterMl) })}</Text>
             </>

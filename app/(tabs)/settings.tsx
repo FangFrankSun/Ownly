@@ -3,19 +3,26 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '@/components/app/auth-context';
+import { auth } from '@/components/app/firebase-client';
 import { type LanguagePreference, useLanguage } from '@/components/app/language-context';
+import { useTasks } from '@/components/app/tasks-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const { syncDebug } = useTasks();
   const { effectiveLanguage, languagePreference, setLanguagePreference, t } = useLanguage();
   const { theme, themes, setThemeById } = useAppTheme();
   const [reminders, setReminders] = useState(true);
   const [sync, setSync] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
   const selectedLanguage = languagePreference ?? effectiveLanguage;
+  const firebaseProjectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? 'unknown';
+  const fullUid = user?.id ?? 'not signed in';
+  const providerIds =
+    auth?.currentUser?.providerData.map((provider) => provider.providerId).filter(Boolean).join(', ') || 'unknown';
 
   const onSignOut = async () => {
     await signOut();
@@ -29,6 +36,13 @@ export default function SettingsScreen() {
         <CardTitle accent={theme.secondary} icon="person" title={t('settings.you')} />
         <Text style={styles.name}>{user?.name ?? t('common.user')}</Text>
         <Text style={styles.email}>{user?.email ?? t('common.unknownEmail')}</Text>
+        <Text style={styles.accountMeta}>UID: {fullUid}</Text>
+        <Text style={styles.accountMeta}>Provider: {providerIds}</Text>
+        <Text style={styles.accountMeta}>Project: {firebaseProjectId}</Text>
+        <Text style={styles.accountMeta}>Tasks Path: {syncDebug.collectionPath ?? 'n/a'}</Text>
+        <Text style={styles.accountMeta}>Server Tasks: {syncDebug.serverTaskCount ?? 'n/a'}</Text>
+        <Text style={styles.accountMeta}>Server Categories: {syncDebug.serverCategoryCount ?? 'n/a'}</Text>
+        <Text style={styles.accountMeta}>Server Sync Error: {syncDebug.lastServerSyncError ?? 'none'}</Text>
         <Pressable onPress={onSignOut} style={[styles.logoutButton, { backgroundColor: `${theme.primary}20` }]}>
           <Text style={[styles.logoutButtonText, { color: theme.primary }]}>{t('settings.logout')}</Text>
         </Pressable>
@@ -144,7 +158,7 @@ function SettingRow({
 
 const styles = StyleSheet.create({
   name: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '800',
     letterSpacing: -0.6,
     color: '#1A2133',
@@ -152,6 +166,11 @@ const styles = StyleSheet.create({
   email: {
     fontSize: 14,
     color: '#66708B',
+  },
+  accountMeta: {
+    fontSize: 12,
+    color: '#7A839A',
+    fontWeight: '600',
   },
   logoutButton: {
     marginTop: 6,

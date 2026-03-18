@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -177,6 +177,17 @@ function normalizeHexColor(value: string) {
   return candidate;
 }
 
+function toTaskSaveErrorMessage(raw: string) {
+  const normalized = raw.toLowerCase();
+  if (normalized.includes('quota')) {
+    return 'Cloud quota is exceeded. Task cannot be saved to server right now.';
+  }
+  if (normalized.includes('timed out') || normalized.includes('taking too long')) {
+    return 'Cloud sync is taking too long right now. Ownly stopped waiting so the screen does not freeze.';
+  }
+  return raw;
+}
+
 type PaletteSwatchProps = {
   color: string;
   selected: boolean;
@@ -242,9 +253,31 @@ export default function TaskEditorScreen() {
   const insets = useSafeAreaInsets();
   const { effectiveLanguage, localeTag, t } = useLanguage();
   const { theme } = useAppTheme();
-  const { taskId } = useLocalSearchParams<{ taskId?: string }>();
-  const { tasks, categories, addTask, updateTask, deleteTask, addCategory, updateCategoryColor, deleteCategory } =
-    useTasks();
+  const {
+    taskId,
+    debugTitle,
+    debugNotes,
+    debugCategory,
+    debugAutoSave,
+  } = useLocalSearchParams<{
+    taskId?: string;
+    debugTitle?: string;
+    debugNotes?: string;
+    debugCategory?: string;
+    debugAutoSave?: string;
+  }>();
+  const {
+    tasks,
+    categories,
+    isReady,
+    addTask,
+    updateTask,
+    deleteTask,
+    addCategory,
+    renameCategory,
+    updateCategoryColor,
+    deleteCategory,
+  } = useTasks();
 
   const isEditing = typeof taskId === 'string' && taskId.length > 0;
   const isPhoneLayout = Platform.OS !== 'web';
@@ -265,6 +298,7 @@ export default function TaskEditorScreen() {
   const [error, setError] = useState('');
 
   const [categoryEditMode, setCategoryEditMode] = useState(false);
+  const [categoryNameDrafts, setCategoryNameDrafts] = useState<Record<string, string>>({});
   const [newCategoryName, setNewCategoryName] = useState('');
   const [colorPaletteOpen, setColorPaletteOpen] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
@@ -287,6 +321,141 @@ export default function TaskEditorScreen() {
   const [durationInput, setDurationInput] = useState(String(editingTask?.durationMinutes ?? 60));
   const [pickerError, setPickerError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [missingTaskTimedOut, setMissingTaskTimedOut] = useState(false);
+  const debugAutoSaveAttemptedRef = useRef(false);
+  const titleInputRef = useRef<TextInput | null>(null);
+  const notesInputRef = useRef<TextInput | null>(null);
+  const newCategoryInputRef = useRef<TextInput | null>(null);
+  const manualTimeInputRef = useRef<TextInput | null>(null);
+  const durationInputRef = useRef<TextInput | null>(null);
+
+  const dismissEditorInputs = () => {
+    titleInputRef.current?.blur();
+    notesInputRef.current?.blur();
+    newCategoryInputRef.current?.blur();
+    manualTimeInputRef.current?.blur();
+    durationInputRef.current?.blur();
+    Keyboard.dismiss();
+  };
+
+  useEffect(() => {
+    if (!isEditing) {
+      setMissingTaskTimedOut(false);
+      return;
+    }
+
+    if (editingTask) {
+      setMissingTaskTimedOut(false);
+      return;
+    }
+
+    if (!isReady) {
+      setMissingTaskTimedOut(false);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setMissingTaskTimedOut(true);
+    }, 4000);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [editingTask, isEditing, isReady]);
+
+  useEffect(() => {
+    if (defaultCategoryId && (!categoryId || !categories.some((category) => category.id === categoryId))) {
+      setCategoryId(defaultCategoryId);
+    }
+  }, [categories, categoryId, defaultCategoryId]);
+
+  useEffect(() => {
+    setCategoryNameDrafts(
+      Object.fromEntries(categories.map((category) => [category.id, category.name]))
+    );
+  }, [categories]);
+
+  useEffect(() => {
+    if (!editingTask) {
+      return;
+    }
+
+    setTitle(editingTask.title);
+    setNotes(editingTask.notes);
+    setCategoryId(editingTask.categoryId || defaultCategoryId);
+    setScheduledAt(editingTask.scheduledAt);
+    setDurationMinutes(editingTask.durationMinutes);
+    setRepeatable(editingTask.repeatable);
+    setDurationInput(String(editingTask.durationMinutes));
+
+    const current = new Date(editingTask.scheduledAt);
+    setPickerDate(current);
+    setPickerHour(current.getHours());
+    setPickerMinute(current.getMinutes() >= 30 ? 30 : 0);
+    setManualTime(formatManualTime(current.getHours(), current.getMinutes()));
+  }, [defaultCategoryId, editingTask]);
+
+  useEffect(() => {
+    if (!__DEV__ || debugAutoSave !== '1' || isEditing || debugAutoSaveAttemptedRef.current) {
+      return;
+    }
+
+    if (categories.length === 0) {
+      return;
+    }
+
+    debugAutoSaveAttemptedRef.current = true;
+
+    const normalizedTitle = typeof debugTitle === 'string' && debugTitle.trim() ? debugTitle.trim() : 'Native QA Task';
+    const normalizedNotes = typeof debugNotes === 'string' ? debugNotes.trim() : '';
+    const normalizedCategoryName = typeof debugCategory === 'string' ? debugCategory.trim().toLowerCase() : '';
+    const matchingCategory = normalizedCategoryName
+      ? categories.find((category) => category.name.trim().toLowerCase() === normalizedCategoryName)
+      : null;
+    const fallbackCategoryId = matchingCategory?.id ?? defaultCategoryId;
+
+    if (!fallbackCategoryId) {
+      setError('Unable to find a category for the native smoke test.');
+      return;
+    }
+
+    setIsSaving(true);
+    void (async () => {
+      try {
+        const result = await addTask({
+          title: normalizedTitle,
+          notes: normalizedNotes,
+          categoryId: fallbackCategoryId,
+          scheduledAt,
+          durationMinutes,
+          repeatable,
+        });
+
+        if (!result.ok) {
+          setError(result.error || 'Failed to save task during native smoke test.');
+          return;
+        }
+
+        router.replace('/tasks');
+      } finally {
+        setIsSaving(false);
+      }
+    })();
+  }, [
+    addTask,
+    categories,
+    debugAutoSave,
+    debugCategory,
+    debugNotes,
+    debugTitle,
+    defaultCategoryId,
+    durationMinutes,
+    isEditing,
+    repeatable,
+    router,
+    scheduledAt,
+  ]);
 
   const dateOptions = useMemo(() => buildDateOptions(), []);
   const timeOptions = useMemo(() => buildTimeOptions(localeTag), [localeTag]);
@@ -333,6 +502,8 @@ export default function TaskEditorScreen() {
   };
 
   const handleCreateCategory = () => {
+    dismissEditorInputs();
+
     if (!newCategoryName.trim()) {
       setError(t('taskEditor.categoryNameRequired'));
       return;
@@ -360,7 +531,38 @@ export default function TaskEditorScreen() {
     deleteCategory(id);
   };
 
-  const handleSave = () => {
+  const handleSaveCategoryName = (id: string) => {
+    dismissEditorInputs();
+    const nextName = categoryNameDrafts[id]?.trim() ?? '';
+    if (!nextName) {
+      setError(t('taskEditor.categoryNameRequired'));
+      return;
+    }
+
+    const duplicate = categories.find(
+      (category) => category.id !== id && category.name.toLowerCase() === nextName.toLowerCase()
+    );
+    if (duplicate) {
+      setError('Category name already exists.');
+      return;
+    }
+
+    renameCategory(id, nextName);
+    setError('');
+  };
+
+  const handleSave = async () => {
+    dismissEditorInputs();
+
+    if (isSaving) {
+      return;
+    }
+
+    if (isEditing && !editingTask) {
+      setError(isReady ? 'Task is still loading. Please wait a moment.' : 'Loading task...');
+      return;
+    }
+
     if (!title.trim()) {
       setError(t('taskEditor.taskTitleRequired'));
       return;
@@ -385,13 +587,21 @@ export default function TaskEditorScreen() {
       repeatable,
     };
 
-    if (editingTask) {
-      updateTask(editingTask.id, payload);
-    } else {
-      addTask(payload);
-    }
+    setIsSaving(true);
+    try {
+      const result = editingTask ? await updateTask(editingTask.id, payload) : await addTask(payload);
+      if (!result.ok) {
+        setError(toTaskSaveErrorMessage(result.error || 'Failed to save task to server. Please try again.'));
+        return;
+      }
 
-    router.back();
+      router.back();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Task save failed.';
+      setError(toTaskSaveErrorMessage(message));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const openCategoryColorPicker = (categoryIdToEdit: string, currentColor: string) => {
@@ -411,6 +621,8 @@ export default function TaskEditorScreen() {
   };
 
   const handleSaveCategoryColor = () => {
+    dismissEditorInputs();
+
     if (!editingCategoryId) {
       closeCategoryColorPicker();
       return;
@@ -426,21 +638,71 @@ export default function TaskEditorScreen() {
     closeCategoryColorPicker();
   };
   const handleDeleteTask = () => {
+    if (isSaving) {
+      return;
+    }
+
     if (!editingTask) {
+      setError(isReady ? 'Task is still loading. Please wait a moment.' : 'Loading task...');
       return;
     }
     setDeleteConfirmOpen(true);
   };
 
-  const confirmDeleteTask = () => {
+  const confirmDeleteTask = async () => {
+    dismissEditorInputs();
+
+    if (isSaving) {
+      return;
+    }
+
     if (!editingTask) {
       setDeleteConfirmOpen(false);
       return;
     }
-    deleteTask(editingTask.id);
-    setDeleteConfirmOpen(false);
-    router.back();
+
+    setIsSaving(true);
+    try {
+      const result = await deleteTask(editingTask.id);
+      if (!result.ok) {
+        setError(toTaskSaveErrorMessage(result.error || 'Failed to delete task on server. Please try again.'));
+        return;
+      }
+
+      setDeleteConfirmOpen(false);
+      router.back();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Task delete failed.';
+      setError(toTaskSaveErrorMessage(message));
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const isEditingTaskLoading = isEditing && !editingTask && (!isReady || !missingTaskTimedOut);
+  const isEditingTaskMissing = isEditing && !editingTask && isReady && missingTaskTimedOut;
+
+  if (isEditingTaskLoading || isEditingTaskMissing) {
+    return (
+      <View style={styles.loadingStateScreen}>
+        <View style={styles.loadingStateCard}>
+          <Text style={styles.loadingStateTitle}>
+            {isEditingTaskLoading ? 'Loading task…' : 'Task not found'}
+          </Text>
+          <Text style={styles.loadingStateText}>
+            {isEditingTaskLoading
+              ? 'Ownly is loading the latest task data so editing stays in sync across browsers.'
+              : 'This task could not be loaded. Go back to Tasks, let sync finish, then open it again.'}
+          </Text>
+          <Pressable
+            onPress={() => router.replace('/tasks')}
+            style={[styles.loadingStateButton, { backgroundColor: theme.primary }]}>
+            <Text style={styles.loadingStateButtonText}>Back to Tasks</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
@@ -453,11 +715,11 @@ export default function TaskEditorScreen() {
             styles.scrollContent,
             {
               paddingTop: Math.max(40, insets.top + 16),
-              paddingBottom: Math.max(42, insets.bottom + (isPhoneLayout ? 32 : 8)),
+              paddingBottom: Math.max(180, insets.bottom + (isPhoneLayout ? 132 : 110)),
             },
           ]}
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           onScrollBeginDrag={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
           <View style={styles.topRow}>
@@ -469,7 +731,7 @@ export default function TaskEditorScreen() {
               <Text style={styles.headerSubtitle}>{t('taskEditor.subtitle')}</Text>
             </View>
             {editingTask ? (
-              <Pressable onPress={handleDeleteTask} style={styles.deleteTopButton}>
+              <Pressable disabled={isSaving} onPress={handleDeleteTask} style={[styles.deleteTopButton, isSaving && styles.disabledButton]}>
                 <AppIcon color="#C7364A" name="delete-outline" size={19} />
               </Pressable>
             ) : (
@@ -486,20 +748,25 @@ export default function TaskEditorScreen() {
             </View>
             <Text style={styles.inputLabel}>{t('taskEditor.labelTitle')}</Text>
             <TextInput
+              ref={titleInputRef}
               onChangeText={setTitle}
               placeholder={t('taskEditor.placeholderTitle')}
               placeholderTextColor="#8E96AC"
               style={styles.input}
               value={title}
+              returnKeyType="next"
+              onSubmitEditing={() => notesInputRef.current?.focus()}
             />
             <Text style={styles.inputLabel}>{t('taskEditor.labelNotes')}</Text>
             <TextInput
+              ref={notesInputRef}
               multiline
               onChangeText={setNotes}
               placeholder={t('taskEditor.placeholderNotes')}
               placeholderTextColor="#8E96AC"
               style={[styles.input, styles.notesInput]}
               value={notes}
+              textAlignVertical="top"
             />
             <Text style={styles.inputLabel}>{t('taskEditor.labelDateDuration')}</Text>
             <Pressable onPress={openPicker} style={styles.pickerButton}>
@@ -543,35 +810,58 @@ export default function TaskEditorScreen() {
                 const selected = category.id === categoryId;
 
                 return (
-                  <View key={category.id} style={styles.categoryRow}>
-                    <Pressable
-                      onPress={() => setCategoryId(category.id)}
-                      style={[
-                        styles.categoryChip,
-                        selected && {
-                          borderColor: category.color,
-                          backgroundColor: `${category.color}14`,
-                        },
-                      ]}>
-                      <Text
+                  <View key={category.id} style={styles.categoryRowGroup}>
+                    <View style={styles.categoryRow}>
+                      <Pressable
+                        onPress={() => setCategoryId(category.id)}
                         style={[
-                          styles.categoryChipText,
+                          styles.categoryChip,
                           selected && {
-                            color: category.color,
+                            borderColor: category.color,
+                            backgroundColor: `${category.color}14`,
                           },
                         ]}>
-                        {localizeTaskCategoryName(category.name, effectiveLanguage)}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => openCategoryColorPicker(category.id, category.color)}
-                      style={styles.categoryColorButton}>
-                      <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
-                    </Pressable>
-                    {categoryEditMode ? (
-                      <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
-                        <AppIcon color="#C7364A" name="delete-outline" size={18} />
+                        <Text
+                          style={[
+                            styles.categoryChipText,
+                            selected && {
+                              color: category.color,
+                            },
+                          ]}>
+                          {localizeTaskCategoryName(category.name, effectiveLanguage)}
+                        </Text>
                       </Pressable>
+                      <Pressable
+                        onPress={() => openCategoryColorPicker(category.id, category.color)}
+                        style={styles.categoryColorButton}>
+                        <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
+                      </Pressable>
+                      {categoryEditMode ? (
+                        <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
+                          <AppIcon color="#C7364A" name="delete-outline" size={18} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    {categoryEditMode ? (
+                      <View style={styles.categoryEditRow}>
+                        <TextInput
+                          onChangeText={(value) =>
+                            setCategoryNameDrafts((previous) => ({
+                              ...previous,
+                              [category.id]: value,
+                            }))
+                          }
+                          placeholder={t('taskEditor.placeholderNewCategory')}
+                          placeholderTextColor="#8E96AC"
+                          style={styles.categoryEditInput}
+                          value={categoryNameDrafts[category.id] ?? category.name}
+                          returnKeyType="done"
+                          onSubmitEditing={() => handleSaveCategoryName(category.id)}
+                        />
+                        <Pressable onPress={() => handleSaveCategoryName(category.id)} style={styles.categorySaveButton}>
+                          <Text style={styles.categorySaveButtonText}>{t('common.save')}</Text>
+                        </Pressable>
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -580,24 +870,45 @@ export default function TaskEditorScreen() {
 
             <Text style={styles.inputLabel}>{t('taskEditor.newCategory')}</Text>
             <TextInput
+              ref={newCategoryInputRef}
               onChangeText={setNewCategoryName}
               placeholder={t('taskEditor.placeholderNewCategory')}
               placeholderTextColor="#8E96AC"
               style={styles.input}
               value={newCategoryName}
+              returnKeyType="done"
+              onSubmitEditing={handleCreateCategory}
             />
             <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>{t('taskEditor.addCategory')}</Text>
             </Pressable>
           </View>
-
-          <Pressable
-            onPress={handleSave}
-            style={[styles.primaryButton, { backgroundColor: theme.primary, borderColor: `${theme.primary}99` }]}>
-            <Text style={styles.primaryButtonText}>{editingTask ? t('taskEditor.saveChanges') : t('taskEditor.createTask')}</Text>
-          </Pressable>
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ScrollView>
+
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.bottomActionWrap,
+            {
+              paddingBottom: Math.max(insets.bottom, 12),
+            },
+          ]}>
+          <View style={styles.bottomActionCard}>
+            <Pressable
+              disabled={isSaving}
+              onPress={handleSave}
+              style={[
+                styles.primaryButton,
+                { backgroundColor: theme.primary, borderColor: `${theme.primary}99` },
+                isSaving && styles.disabledButton,
+              ]}>
+              <Text style={styles.primaryButtonText}>
+                {editingTask ? t('taskEditor.saveChanges') : t('taskEditor.createTask')}
+              </Text>
+            </Pressable>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          </View>
+        </View>
       </KeyboardAvoidingView>
 
       <Modal animationType="fade" transparent visible={pickerOpen}>
@@ -610,7 +921,7 @@ export default function TaskEditorScreen() {
               <ScrollView
                 bounces={false}
                 contentContainerStyle={styles.modalCardScrollContent}
-                keyboardShouldPersistTaps="handled"
+                keyboardShouldPersistTaps="always"
                 showsVerticalScrollIndicator={false}
                 style={styles.modalCardScroll}>
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
@@ -672,24 +983,28 @@ export default function TaskEditorScreen() {
                 <View style={styles.manualTimeRow}>
                   <Text style={styles.manualTimeLabel}>{t('taskEditor.exactTime')}</Text>
                   <TextInput
+                    ref={manualTimeInputRef}
                     onChangeText={setManualTime}
                     value={manualTime}
                     placeholder={t('taskEditor.manualTimePlaceholder')}
                     placeholderTextColor="#8E96AC"
                     style={styles.manualTimeInput}
                     keyboardType="numbers-and-punctuation"
+                    returnKeyType="done"
                   />
                 </View>
 
                 <View style={styles.manualTimeRow}>
                   <Text style={styles.manualTimeLabel}>{t('taskEditor.durationShort')}</Text>
                   <TextInput
+                    ref={durationInputRef}
                     onChangeText={setDurationInput}
                     value={durationInput}
                     placeholder={t('taskEditor.durationPlaceholder')}
                     placeholderTextColor="#8E96AC"
                     style={styles.durationInput}
                     keyboardType="number-pad"
+                    returnKeyType="done"
                   />
                 </View>
 
@@ -743,7 +1058,7 @@ export default function TaskEditorScreen() {
               <ScrollView
                 bounces={false}
                 contentContainerStyle={styles.paletteModalScrollContent}
-                keyboardShouldPersistTaps="handled"
+                keyboardShouldPersistTaps="always"
                 showsVerticalScrollIndicator={false}
                 style={styles.paletteModalScroll}>
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
@@ -829,10 +1144,10 @@ export default function TaskEditorScreen() {
             <Text style={styles.deleteConfirmTitle}>{t('taskEditor.deleteTaskTitle')}</Text>
             <Text style={styles.deleteConfirmDescription}>{t('taskEditor.deleteTaskDescription')}</Text>
             <View style={styles.deleteConfirmActions}>
-              <Pressable onPress={() => setDeleteConfirmOpen(false)} style={styles.deleteCancelButton}>
+              <Pressable disabled={isSaving} onPress={() => setDeleteConfirmOpen(false)} style={[styles.deleteCancelButton, isSaving && styles.disabledButton]}>
                 <Text style={styles.deleteCancelButtonText}>{t('common.cancel')}</Text>
               </Pressable>
-              <Pressable onPress={confirmDeleteTask} style={styles.deleteConfirmButton}>
+              <Pressable disabled={isSaving} onPress={confirmDeleteTask} style={[styles.deleteConfirmButton, isSaving && styles.disabledButton]}>
                 <Text style={styles.deleteConfirmButtonText}>{t('common.delete')}</Text>
               </Pressable>
             </View>
@@ -850,6 +1165,21 @@ const styles = StyleSheet.create({
   },
   editorKeyboardAvoiding: {
     flex: 1,
+  },
+  bottomActionWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+  },
+  bottomActionCard: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    backgroundColor: 'rgba(242, 245, 252, 0.96)',
+    paddingTop: 8,
+    gap: 8,
   },
   scrollContent: {
     paddingHorizontal: 18,
@@ -1030,6 +1360,9 @@ const styles = StyleSheet.create({
   categoryList: {
     gap: 9,
   },
+  categoryRowGroup: {
+    gap: 8,
+  },
   categoryRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1076,6 +1409,38 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF3F5',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  categoryEditRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  categoryEditInput: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D8E1F1',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FAFCFF',
+    fontSize: 13,
+    color: '#1A2133',
+    fontWeight: '600',
+  },
+  categorySaveButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D0DAEE',
+    backgroundColor: '#F5F8FF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categorySaveButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#3D4A72',
   },
   customColorPreview: {
     width: 32,
@@ -1498,5 +1863,53 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  loadingStateScreen: {
+    flex: 1,
+    backgroundColor: '#F4F7FB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  loadingStateCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#DCE5F5',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    gap: 12,
+    alignItems: 'center',
+  },
+  loadingStateTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#1A2133',
+  },
+  loadingStateText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#5D6886',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  loadingStateButton: {
+    marginTop: 4,
+    minWidth: 160,
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingStateButtonText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  disabledButton: {
+    opacity: 0.55,
   },
 });

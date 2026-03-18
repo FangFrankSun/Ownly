@@ -111,9 +111,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setThemeById = useCallback((nextThemeId: string) => {
     const next = getThemeById(nextThemeId);
+    if (next.id === themeId && next.id === (user?.themeId ?? DEFAULT_THEME_ID)) {
+      return;
+    }
+
     setThemeId(next.id);
 
-    if (user && db) {
+    if (user && db && next.id !== (user.themeId ?? DEFAULT_THEME_ID)) {
       void setDoc(
         doc(db, 'users', user.id),
         {
@@ -123,9 +127,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         { merge: true }
       ).catch((error) => {
         console.error('Failed to update Firebase theme preference', error);
-      });
+        });
     }
-  }, [user]);
+  }, [themeId, user]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({

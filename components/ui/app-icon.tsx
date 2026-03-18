@@ -1,25 +1,6 @@
-import createIconSet from '@expo/vector-icons/createIconSet';
-import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
-
-const materialGlyphMap = require('@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps/MaterialIcons.json') as Record<
-  string,
-  number
->;
-const materialCommunityGlyphMap = require('@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps/MaterialCommunityIcons.json') as Record<
-  string,
-  number
->;
-
-const LocalMaterialIcons = createIconSet(
-  materialGlyphMap,
-  'material',
-  require('../../assets/fonts/MaterialIcons.ttf')
-);
-const LocalMaterialCommunityIcons = createIconSet(
-  materialCommunityGlyphMap,
-  'material-community',
-  require('../../assets/fonts/MaterialCommunityIcons.ttf')
-);
+import { type ComponentProps } from 'react';
+import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { type OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
 type AppIconName = string;
 type AppIconFamily = 'material' | 'community';
@@ -39,14 +20,21 @@ export function AppIcon({
 }) {
   if (family === 'community') {
     return (
-      <LocalMaterialCommunityIcons
+      <MaterialCommunityIcons
         color={color}
-        name={name}
+        name={name as ComponentProps<typeof MaterialCommunityIcons>['name']}
         size={size}
         style={style}
       />
     );
   }
 
-  return <LocalMaterialIcons color={color} name={name} size={size} style={style} />;
+  return (
+    <MaterialIcons
+      color={color}
+      name={name as ComponentProps<typeof MaterialIcons>['name']}
+      size={size}
+      style={style}
+    />
+  );
 }

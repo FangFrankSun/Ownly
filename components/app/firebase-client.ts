@@ -10,7 +10,12 @@ import {
   type Auth,
   type Persistence,
 } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  setLogLevel,
+  type Firestore,
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
@@ -38,6 +43,11 @@ export const isFirebaseConfigured = Boolean(
 );
 
 const app = isFirebaseConfigured ? (getApps().length ? getApp() : initializeApp(firebaseConfig)) : null;
+let authReadyPromise: Promise<void> = Promise.resolve();
+
+if (app) {
+  setLogLevel(Platform.OS === 'web' ? 'error' : 'silent');
+}
 
 type FirebaseAuthWithReactNativePersistence = typeof FirebaseAuth & {
   getReactNativePersistence: (storage: typeof AsyncStorage) => Persistence;
@@ -50,7 +60,7 @@ function createAuth() {
 
   if (Platform.OS === 'web') {
     const webAuth = getAuth(app);
-    void setPersistence(webAuth, browserLocalPersistence).catch((error: unknown) => {
+    authReadyPromise = setPersistence(webAuth, browserLocalPersistence).catch((error: unknown) => {
       console.error('Failed to enable Firebase auth persistence on web', error);
     });
     return webAuth;
@@ -66,8 +76,43 @@ function createAuth() {
   }
 }
 
+function createFirestore() {
+  if (!app) {
+    return null;
+  }
+
+  if (Platform.OS === 'web') {
+    try {
+      return initializeFirestore(app, {
+        experimentalAutoDetectLongPolling: true,
+        useFetchStreams: false,
+      } as unknown as Parameters<typeof initializeFirestore>[1]);
+    } catch (error) {
+      console.error('Failed to initialize Firestore with web long polling; falling back to default transport', error);
+    }
+
+    return getFirestore(app);
+  }
+
+  try {
+    // Force long polling on native to avoid RN streaming transport issues that can trap Firestore in cache mode.
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+      useFetchStreams: false,
+    } as unknown as Parameters<typeof initializeFirestore>[1]);
+  } catch (error) {
+    console.error('Failed to initialize Firestore with forced long polling; falling back to default transport', error);
+  }
+
+  return getFirestore(app);
+}
+
 export const auth: Auth | null = createAuth();
-export const db: Firestore | null = app ? getFirestore(app) : null;
+export const db: Firestore | null = createFirestore();
+
+export function waitForAuthReady() {
+  return authReadyPromise;
+}
 
 type WebFirebaseAuthSupport =
   | {

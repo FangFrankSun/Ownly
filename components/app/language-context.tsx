@@ -35,9 +35,12 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'tabs.dashboard': 'Dashboard',
     'tabs.tasks': 'Tasks',
     'tabs.calendar': 'Calendar',
+    'tabs.health': 'Health',
     'tabs.exercise': 'Exercise',
     'tabs.diet': 'Diet',
     'tabs.settings': 'Settings',
+    'health.exercise': 'Exercise',
+    'health.diet': 'Diet',
     'theme.ocean': 'Ocean',
     'theme.sunset': 'Sunset',
     'theme.mint': 'Mint',
@@ -266,9 +269,12 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'tabs.dashboard': '首页',
     'tabs.tasks': '任务',
     'tabs.calendar': '日历',
+    'tabs.health': '健康',
     'tabs.exercise': '运动',
     'tabs.diet': '饮食',
     'tabs.settings': '设置',
+    'health.exercise': '运动',
+    'health.diet': '饮食',
     'theme.ocean': '海洋',
     'theme.sunset': '日落',
     'theme.mint': '薄荷',
@@ -308,14 +314,14 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'dashboard.weather.enableServices': '请打开定位服务以查看本地天气。',
     'dashboard.weather.unavailable': '暂时无法获取天气，稍后再试。',
     'dashboard.weather.area': '你所在地区',
-    'dashboard.weather.windLine': (vars) => `风速 ${vars?.windSpeed} mph · ${vars?.date} · ${vars?.time}`,
-    'dashboard.weather.cityLine': (vars) => `${vars?.city} · ${vars?.description}`,
+    'dashboard.weather.windLine': (vars) => `风速 ${vars?.windSpeed} 英里/小时 · ${vars?.date} · ${vars?.time}`,
+    'dashboard.weather.cityLine': (vars) => `位置：${vars?.city} · ${vars?.description}`,
     'dashboard.exercise.title': '运动',
     'dashboard.exercise.subtitle': '今日运动',
-    'dashboard.exercise.meta': (vars) => `今天 ${vars?.sessions} 次 · 目标 ${vars?.goal} kcal`,
+    'dashboard.exercise.meta': (vars) => `今天 ${vars?.sessions} 次 · 目标 ${vars?.goal} 千卡`,
     'dashboard.diet.title': '饮食',
     'dashboard.diet.subtitle': '剩余热量',
-    'dashboard.diet.meta': (vars) => `今天已用 ${vars?.consumed}/${vars?.target} kcal`,
+    'dashboard.diet.meta': (vars) => `今天已用 ${vars?.consumed}/${vars?.target} 千卡`,
     'dashboard.diet.macros': (vars) => `蛋白质 ${vars?.protein}g · 碳水 ${vars?.carbs}g · 脂肪 ${vars?.fat}g`,
     'dashboard.tasks.title': '任务',
     'dashboard.tasks.subtitle': '专注列表',
@@ -347,14 +353,14 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'exercise.todayBurned': '今天燃烧的热量',
     'exercise.setup': '基础设置',
     'exercise.setupHint': '每小时热量会根据你填写的体重和 MET 数值估算。',
-    'exercise.goal': (vars) => `目标：${vars?.goal} kcal`,
+    'exercise.goal': (vars) => `目标：${vars?.goal} 千卡`,
     'exercise.goalPercent': (vars) => `达到今日目标的 ${vars?.percent}%`,
-    'exercise.goalCalories': '目标（kcal）',
+    'exercise.goalCalories': '目标（千卡）',
     'exercise.category': '分类',
     'exercise.library': '运动库',
     'exercise.searchPlaceholder': '搜索运动名称',
     'exercise.duration': '时长（分钟）',
-    'exercise.weight': '体重（kg）',
+    'exercise.weight': '体重（公斤）',
     'exercise.customName': '自定义运动名称',
     'exercise.customCalories': '每小时热量',
     'exercise.preview': '预计消耗',
@@ -375,10 +381,10 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'diet.commonFoods': '常见食物',
     'diet.searchPlaceholder': '请输入食物名称',
     'diet.targetCalories': '目标热量',
-    'diet.waterMl': '饮水（ml）',
+    'diet.waterMl': '饮水（毫升）',
     'diet.saveTargets': '保存目标',
     'diet.caloriesLeft': '剩余热量',
-    'diet.usedToday': (vars) => `今天已用 ${vars?.consumed}/${vars?.target} kcal`,
+    'diet.usedToday': (vars) => `今天已用 ${vars?.consumed}/${vars?.target} 千卡`,
     'diet.macros': (vars) => `蛋白质 ${vars?.protein}g · 碳水 ${vars?.carbs}g · 脂肪 ${vars?.fat}g`,
     'diet.foods': '食物库',
     'diet.quickAdd': '快速记录',
@@ -394,7 +400,7 @@ const TRANSLATIONS: Record<SupportedLanguage, TranslationDictionary> = {
     'diet.addEntry': '加入餐次',
     'diet.updateEntry': '更新记录',
     'diet.cancelEdit': '取消编辑',
-    'diet.loggedForMeal': (vars) => `${vars?.meal} · ${vars?.calories} kcal`,
+    'diet.loggedForMeal': (vars) => `${vars?.meal} · ${vars?.calories} 千卡`,
     'diet.noEntries': '这个餐次还没有记录食物。',
     'diet.noMatches': '当前分类下没有匹配这次搜索的食物。',
     'diet.breakfast': '早餐',
@@ -524,9 +530,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const setLanguagePreference = useCallback(
     (value: SupportedLanguage) => {
+      if (value === languagePreference && value === normalizeLanguagePreference(user?.languagePreference)) {
+        return;
+      }
+
       setLanguagePreferenceState(value);
 
-      if (user && db) {
+      if (user && db && value !== normalizeLanguagePreference(user.languagePreference)) {
         void setDoc(
           doc(db, 'users', user.id),
           {
@@ -539,7 +549,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         });
       }
     },
-    [user]
+    [languagePreference, user]
   );
 
   const t = useCallback(

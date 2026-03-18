@@ -2,13 +2,14 @@
   "expo": {
     "name": "Ownly",
     "slug": "me-app",
-    "version": "1.0.4",
+    "version": "1.0.6",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/ownly-ios-app-icon-1024.png",
     "scheme": "ownly",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "buildNumber": "6",
       "supportsTablet": true,
       "usesAppleSignIn": true,
       "bundleIdentifier": "com.shphfranksun.ownly",
@@ -30,7 +31,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/ownly-meta-icon-transparent-1024.png"
     },
     "plugins": [
       "expo-router",

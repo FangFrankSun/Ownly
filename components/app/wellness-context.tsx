@@ -3,6 +3,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 import { useAuth } from './auth-context';
 import { db } from './firebase-client';
+import { recoverFirestoreNetwork, withFirestoreTimeout } from './firestore-utils';
 
 export type ExerciseSessionDraft = {
   name: string;
@@ -75,6 +76,8 @@ const DEFAULT_DIET_SUMMARY: DietSummary = {
   fatGrams: 46,
   waterMl: 1100,
 };
+const MAX_EXERCISE_SESSIONS = 240;
+const MAX_DIET_ENTRIES = 480;
 
 type PersistedWellnessState = {
   exerciseSessions: ExerciseSession[];
@@ -171,6 +174,18 @@ function recalculateDietSummary(entries: DietEntry[], baseSummary: DietSummary):
   };
 }
 
+function trimPersistedWellnessState(state: PersistedWellnessState): PersistedWellnessState {
+  const exerciseSessions = sortSessionsDesc(state.exerciseSessions).slice(0, MAX_EXERCISE_SESSIONS);
+  const dietEntries = sortSessionsDesc(state.dietEntries).slice(0, MAX_DIET_ENTRIES);
+
+  return {
+    ...state,
+    exerciseSessions,
+    dietEntries,
+    dietSummary: recalculateDietSummary(dietEntries, state.dietSummary),
+  };
+}
+
 function normalizePersistedState(raw: Partial<PersistedWellnessState> | null | undefined): PersistedWellnessState {
   const exerciseSessions = Array.isArray(raw?.exerciseSessions)
     ? raw.exerciseSessions
@@ -226,7 +241,7 @@ function normalizePersistedState(raw: Partial<PersistedWellnessState> | null | u
         )
     : [];
 
-  return {
+  return trimPersistedWellnessState({
     exerciseSessions: sortSessionsDesc(exerciseSessions),
     exerciseSettings: {
       weightKg: Math.max(20, Math.round(Number(raw?.exerciseSettings?.weightKg) || DEFAULT_EXERCISE_SETTINGS.weightKg)),
@@ -238,64 +253,158 @@ function normalizePersistedState(raw: Partial<PersistedWellnessState> | null | u
     dietEntries: sortSessionsDesc(dietEntries),
     dietSummary: dietEntries.length > 0 ? recalculateDietSummary(dietEntries, dietSummaryBase) : dietSummaryBase,
     dashboardCards: sanitizeDashboardCards(raw?.dashboardCards),
-  };
+  });
+}
+
+async function saveWellnessState(userId: string, state: PersistedWellnessState) {
+  if (!db) {
+    return;
+  }
+
+  try {
+    await withFirestoreTimeout(
+      setDoc(
+        doc(db, 'users', userId),
+        {
+          wellness: state,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      ),
+      8000,
+      'Timed out while waiting for Cloud Firestore to save wellness data.'
+    );
+  } catch (firstError) {
+    if (firstError instanceof Error && firstError.message.toLowerCase().includes('timed out')) {
+      throw firstError;
+    }
+    await recoverFirestoreNetwork(db);
+    await withFirestoreTimeout(
+      setDoc(
+        doc(db, 'users', userId),
+        {
+          wellness: state,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      ),
+      8000,
+      'Timed out while waiting for Cloud Firestore to save wellness data.'
+    );
+    if (__DEV__) {
+      console.warn('Wellness save recovered after retry', firstError);
+    }
+  }
 }
 
 export function WellnessProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [isHydrated, setIsHydrated] = useState(false);
+  const [listenerRetryTick, setListenerRetryTick] = useState(0);
   const [state, setState] = useState<PersistedWellnessState>(() => normalizePersistedState(null));
   const lastSerializedRef = useRef('');
+  const pendingSerializedRef = useRef('');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!user || !db) {
+    const firestore = db;
+
+    if (!user || !firestore) {
       setState(normalizePersistedState(null));
       setIsHydrated(true);
       lastSerializedRef.current = '';
+      pendingSerializedRef.current = '';
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
       return;
     }
 
+    setState(normalizePersistedState(null));
     setIsHydrated(false);
+    lastSerializedRef.current = '';
+    pendingSerializedRef.current = '';
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    let isDisposed = false;
 
-    return onSnapshot(
-      doc(db, 'users', user.id),
+    const unsubscribe = onSnapshot(
+      doc(firestore, 'users', user.id),
       (snapshot) => {
+        if (isDisposed) {
+          return;
+        }
         const profile = snapshot.data() as { wellness?: Partial<PersistedWellnessState> } | undefined;
         const next = normalizePersistedState(profile?.wellness);
         const serialized = JSON.stringify(next);
         lastSerializedRef.current = serialized;
+        pendingSerializedRef.current = '';
         setState(next);
         setIsHydrated(true);
       },
       (error) => {
         console.error('Failed to observe wellness state', error);
-        setState(normalizePersistedState(null));
+        void recoverFirestoreNetwork(firestore);
+        if (!isDisposed) {
+          setTimeout(() => {
+            setListenerRetryTick((previous) => previous + 1);
+          }, 1500);
+        }
         setIsHydrated(true);
       }
     );
-  }, [user]);
+
+    return () => {
+      isDisposed = true;
+      unsubscribe();
+    };
+  }, [listenerRetryTick, user]);
 
   useEffect(() => {
     if (!user || !db || !isHydrated) {
       return;
     }
 
-    const serialized = JSON.stringify(state);
+    const stateForStorage = trimPersistedWellnessState(state);
+    const serialized = JSON.stringify(stateForStorage);
     if (serialized === lastSerializedRef.current) {
       return;
     }
 
-    lastSerializedRef.current = serialized;
-    void setDoc(
-      doc(db, 'users', user.id),
-      {
-        wellness: state,
-        updatedAt: Date.now(),
-      },
-      { merge: true }
-    ).catch((error) => {
-      console.error('Failed to save wellness state', error);
-    });
+    if (serialized === pendingSerializedRef.current) {
+      return;
+    }
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      pendingSerializedRef.current = serialized;
+      void saveWellnessState(user.id, stateForStorage)
+        .then(() => {
+          lastSerializedRef.current = serialized;
+        })
+        .catch((error) => {
+          console.error('Failed to save wellness state', error);
+        })
+        .finally(() => {
+          if (pendingSerializedRef.current === serialized) {
+            pendingSerializedRef.current = '';
+          }
+        });
+    }, 750);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
   }, [isHydrated, state, user]);
 
   const addExerciseSession = (draft: ExerciseSessionDraft) => {

@@ -1,6 +1,4 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as AuthSession from 'expo-auth-session';
-import * as Facebook from 'expo-auth-session/providers/facebook';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Crypto from 'expo-crypto';
 import * as Google from 'expo-auth-session/providers/google';
@@ -28,20 +26,15 @@ import { useAppTheme } from '@/components/app/theme-context';
 import { AppIcon } from '@/components/ui/app-icon';
 
 type AuthMode = 'signin' | 'signup';
-type OAuthProvider = 'google' | 'facebook' | 'apple' | 'azure';
+type OAuthProvider = 'google' | 'apple';
 type NativeProvider = 'Apple' | 'Google' | 'Facebook' | 'Microsoft';
 
 WebBrowser.maybeCompleteAuthSession();
 
 const NONCE_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
-const GOOGLE_G_SVG = encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 533.5 544.3">
-  <path fill="#4285F4" d="M533.5 278.4c0-18.5-1.5-37.1-4.7-55.3H272v104.7h147.1c-6.1 33.7-25 63.5-52.2 82.4v68h84.4c49.4-45.5 77.3-112.4 77.3-199.8Z"/>
-  <path fill="#34A853" d="M272 544.3c73.4 0 135.3-24.3 180.4-66.1l-84.4-68c-23.5 16-53.8 25.2-96 25.2-71.1 0-131.4-48-152.9-112.7H32.1v70.1C78.3 484.4 168.8 544.3 272 544.3Z"/>
-  <path fill="#FBBC05" d="M119.1 322.7c-10.7-31.5-10.7-65.7 0-97.2v-70.1H32.1c-38.6 76.9-38.6 160.5 0 237.4l87-70.1Z"/>
-  <path fill="#EA4335" d="M272 107.7c44.7-.7 87.8 16.2 120.7 47.1l90.2-90.2C434.9 19.8 372.9-1.8 272 0 168.8 0 78.3 59.9 32.1 155.4l87 70.1C140.6 155.7 200.9 107.7 272 107.7Z"/>
-</svg>
-`);
+const GOOGLE_G_SVG = encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>'
+);
 
 function createNonce(length = 32) {
   return Array.from(Crypto.getRandomBytes(length), (byte) => NONCE_CHARSET[byte % NONCE_CHARSET.length]).join('');
@@ -135,66 +128,31 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isWeb = Platform.OS === 'web';
   const isIos = Platform.OS === 'ios';
+  const isAndroid = Platform.OS === 'android';
   const webFirebaseAuthSupport = getWebFirebaseAuthSupport();
   const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+  const googleAndroidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '';
   const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? 'ownly-web-popup-auth';
-  const facebookAppId = process.env.EXPO_PUBLIC_FACEBOOK_APP_ID ?? '';
-  const microsoftClientId = process.env.EXPO_PUBLIC_MICROSOFT_CLIENT_ID ?? '';
-  const microsoftTenantId = process.env.EXPO_PUBLIC_MICROSOFT_TENANT_ID ?? 'common';
   const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
   const [isAppleAuthAvailable, setIsAppleAuthAvailable] = useState(!isIos);
   const nativeApplePendingRef = useRef(false);
   const nativeGooglePendingRef = useRef(false);
-  const nativeFacebookPendingRef = useRef(false);
-  const nativeMicrosoftPendingRef = useRef(false);
   const webPopupAttemptRef = useRef(0);
   const [nativeGoogleRequest, nativeGoogleResponse, promptNativeGoogleAsync] = Google.useIdTokenAuthRequest(
     {
       iosClientId: googleIosClientId || undefined,
+      androidClientId: googleAndroidClientId || undefined,
       webClientId: googleWebClientId || undefined,
       selectAccount: true,
     },
     {
       scheme: 'ownly',
-      path: 'oauthredirect',
+      path: 'login',
     }
   );
-  const [facebookRequest, facebookResponse, promptNativeFacebookAsync] = Facebook.useAuthRequest(
-    {
-      clientId: facebookAppId || 'missing-facebook-app-id',
-      iosClientId: facebookAppId || undefined,
-      androidClientId: facebookAppId || undefined,
-      webClientId: facebookAppId || 'ownly-facebook-web-popup',
-      scopes: ['public_profile', 'email'],
-    },
-    facebookAppId
-      ? {
-          native: `fb${facebookAppId}://authorize`,
-        }
-      : undefined
-  );
-  const microsoftIssuer = `https://login.microsoftonline.com/${microsoftTenantId || 'common'}/v2.0`;
-  const microsoftDiscovery = AuthSession.useAutoDiscovery(microsoftIssuer);
-  const microsoftRedirectUri = AuthSession.makeRedirectUri({
-    native: 'ownly://oauthredirect',
-    scheme: 'ownly',
-    path: 'oauthredirect',
-  });
-  const [microsoftRequest, microsoftResponse, promptMicrosoftAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: microsoftClientId || 'missing-microsoft-client-id',
-      redirectUri: microsoftRedirectUri,
-      responseType: AuthSession.ResponseType.Code,
-      prompt: AuthSession.Prompt.SelectAccount,
-      usePKCE: true,
-      scopes: ['openid', 'profile', 'email'],
-    },
-    microsoftDiscovery
-  );
   const canUseNativeApple = isIos && !isExpoGo && isAppleAuthAvailable;
-  const canUseNativeGoogle = isIos && !isExpoGo && Boolean(googleIosClientId);
-  const canUseNativeFacebook = Platform.OS !== 'web' && !isExpoGo && Boolean(facebookAppId);
-  const canUseNativeMicrosoft = Platform.OS !== 'web' && !isExpoGo && Boolean(microsoftClientId);
+  const canUseNativeGoogle =
+    !isExpoGo && ((isIos && Boolean(googleIosClientId)) || (isAndroid && Boolean(googleAndroidClientId)));
 
   useEffect(() => {
     if (!isWeb || !isSubmitting || !isAuthenticated) {
@@ -290,160 +248,9 @@ export default function LoginScreen() {
       setMessage('');
       setError('');
       setIsSubmitting(false);
-      router.replace('/(tabs)/tasks');
+      router.replace('/dashboard');
     })();
   }, [nativeGoogleResponse, router, signInWithGoogleIdToken]);
-
-  useEffect(() => {
-    if (!nativeMicrosoftPendingRef.current || !microsoftResponse) {
-      return;
-    }
-
-    if (microsoftResponse.type === 'cancel' || microsoftResponse.type === 'dismiss') {
-      nativeMicrosoftPendingRef.current = false;
-      setMessage('');
-      setError('Microsoft sign-in was canceled.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (microsoftResponse.type === 'error') {
-      nativeMicrosoftPendingRef.current = false;
-      setMessage('');
-      setError(microsoftResponse.error?.message || 'Microsoft sign-in failed. Please try again.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (microsoftResponse.type !== 'success') {
-      return;
-    }
-
-    const authorizationCode = microsoftResponse.params.code;
-    if (!authorizationCode) {
-      nativeMicrosoftPendingRef.current = false;
-      setMessage('');
-      setError('Microsoft sign-in completed without an authorization code.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!microsoftDiscovery?.tokenEndpoint) {
-      setMessage('Preparing Microsoft sign-in...');
-      return;
-    }
-
-    if (!microsoftRequest?.codeVerifier) {
-      nativeMicrosoftPendingRef.current = false;
-      setMessage('');
-      setError('Microsoft sign-in could not verify the auth code. Please try again.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    setMessage('Finishing Microsoft sign-in...');
-
-    void (async () => {
-      try {
-        const tokenResponse = await AuthSession.exchangeCodeAsync(
-          {
-            clientId: microsoftClientId,
-            code: authorizationCode,
-            redirectUri: microsoftRedirectUri,
-            extraParams: {
-              code_verifier: microsoftRequest.codeVerifier || '',
-            },
-          },
-          {
-            tokenEndpoint: microsoftDiscovery.tokenEndpoint,
-          }
-        );
-
-        const result = await signInWithOAuthTokens('microsoft.com', tokenResponse.idToken, tokenResponse.accessToken);
-        nativeMicrosoftPendingRef.current = false;
-
-        if (!result.ok) {
-          setMessage('');
-          setError(result.error);
-          setIsSubmitting(false);
-          return;
-        }
-
-        setMessage('');
-        setError('');
-        setIsSubmitting(false);
-        router.replace('/(tabs)/tasks');
-      } catch (error) {
-        nativeMicrosoftPendingRef.current = false;
-        setMessage('');
-        setError(error instanceof Error ? error.message : 'Microsoft sign-in failed. Please try again.');
-        setIsSubmitting(false);
-      }
-    })();
-  }, [
-    microsoftClientId,
-    microsoftDiscovery,
-    microsoftRedirectUri,
-    microsoftRequest?.codeVerifier,
-    microsoftResponse,
-    router,
-    signInWithOAuthTokens,
-  ]);
-
-  useEffect(() => {
-    if (!nativeFacebookPendingRef.current || !facebookResponse) {
-      return;
-    }
-
-    if (facebookResponse.type === 'cancel' || facebookResponse.type === 'dismiss') {
-      nativeFacebookPendingRef.current = false;
-      setMessage('');
-      setError('Facebook sign-in was canceled.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (facebookResponse.type === 'error') {
-      nativeFacebookPendingRef.current = false;
-      setMessage('');
-      setError(facebookResponse.error?.message || 'Facebook sign-in failed. Please try again.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (facebookResponse.type !== 'success') {
-      return;
-    }
-
-    const accessToken =
-      facebookResponse.params.access_token ?? facebookResponse.authentication?.accessToken;
-
-    if (!accessToken) {
-      nativeFacebookPendingRef.current = false;
-      setMessage('');
-      setError('Facebook sign-in completed without an access token. Check the Facebook app setup and try again.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    nativeFacebookPendingRef.current = false;
-    setMessage('Finishing Facebook sign-in...');
-
-    void (async () => {
-      const result = await signInWithOAuthTokens('facebook.com', undefined, accessToken);
-      if (!result.ok) {
-        setMessage('');
-        setError(result.error);
-        setIsSubmitting(false);
-        return;
-      }
-
-      setMessage('');
-      setError('');
-      setIsSubmitting(false);
-      router.replace('/(tabs)/tasks');
-    })();
-  }, [facebookResponse, router, signInWithOAuthTokens]);
 
   const submitEmailAuth = async () => {
     setIsSubmitting(true);
@@ -460,11 +267,6 @@ export default function LoginScreen() {
     if (result.message) {
       setMessage(result.message);
       setIsSubmitting(false);
-      return;
-    }
-
-    if (isWeb) {
-      setMessage('Finishing sign-in...');
       return;
     }
 
@@ -496,11 +298,7 @@ export default function LoginScreen() {
 
       if (result.message) {
         setMessage(result.message);
-        return;
-      }
-
-      if (isWeb) {
-        setMessage('Finishing sign-in...');
+        setIsSubmitting(false);
         return;
       }
 
@@ -571,7 +369,7 @@ export default function LoginScreen() {
       setMessage('');
       setError('');
       setIsSubmitting(false);
-      router.replace('/(tabs)/tasks');
+      router.replace('/dashboard');
     } catch (error) {
       nativeApplePendingRef.current = false;
       setMessage('');
@@ -585,20 +383,20 @@ export default function LoginScreen() {
     setError('');
     setMessage('');
 
-    if (!isIos) {
-      setError('Native Google sign-in is currently configured for iOS.');
+    if (!isIos && !isAndroid) {
+      setError('Native Google sign-in is only available on iOS and Android.');
       setIsSubmitting(false);
       return;
     }
 
     if (isExpoGo) {
-      setError('Google sign-in on iOS needs a development build or production app. Expo Go cannot complete this native Google redirect.');
+      setError('Google sign-in needs a development build or production app. Expo Go cannot complete this native Google redirect.');
       setIsSubmitting(false);
       return;
     }
 
-    if (!googleIosClientId) {
-      setError('Google sign-in is not configured for iOS yet.');
+    if ((isIos && !googleIosClientId) || (isAndroid && !googleAndroidClientId)) {
+      setError(isIos ? 'Google sign-in is not configured for iOS yet.' : 'Google sign-in is not configured for Android yet.');
       setIsSubmitting(false);
       return;
     }
@@ -636,120 +434,6 @@ export default function LoginScreen() {
       setError(mapNativeAuthError('Google', error));
       setIsSubmitting(false);
     }
-  };
-
-  const submitNativeFacebook = async () => {
-    setIsSubmitting(true);
-    setError('');
-    setMessage('');
-
-    if (isExpoGo) {
-      setError('Facebook sign-in on mobile needs a development build or production app. Expo Go cannot complete this native redirect.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!facebookAppId) {
-      setError('Facebook sign-in is not configured on this device build yet.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!facebookRequest) {
-      setMessage('Preparing Facebook sign-in...');
-      setIsSubmitting(false);
-      return;
-    }
-
-    nativeFacebookPendingRef.current = true;
-
-    try {
-      const response = await promptNativeFacebookAsync();
-      if (response.type === 'cancel' || response.type === 'dismiss') {
-        nativeFacebookPendingRef.current = false;
-        setMessage('');
-        setError('Facebook sign-in was canceled.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      if (response.type === 'error') {
-        nativeFacebookPendingRef.current = false;
-        setMessage('');
-        setError(mapNativeAuthError('Facebook', response.error));
-        setIsSubmitting(false);
-        return;
-      }
-
-      setMessage('Finishing Facebook sign-in...');
-    } catch (error) {
-      nativeFacebookPendingRef.current = false;
-      setMessage('');
-      setError(mapNativeAuthError('Facebook', error));
-      setIsSubmitting(false);
-    }
-  };
-
-  const submitNativeMicrosoft = async () => {
-    setIsSubmitting(true);
-    setError('');
-    setMessage('');
-
-    if (isExpoGo) {
-      setError('Microsoft sign-in on mobile needs a development build or production app. Expo Go cannot complete this native redirect.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!microsoftClientId) {
-      setError('Microsoft sign-in is not configured on this device build yet.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!microsoftDiscovery || !microsoftRequest) {
-      setMessage('Preparing Microsoft sign-in...');
-      setIsSubmitting(false);
-      return;
-    }
-
-    nativeMicrosoftPendingRef.current = true;
-
-    try {
-      const response = await promptMicrosoftAsync();
-      if (response.type === 'cancel' || response.type === 'dismiss') {
-        nativeMicrosoftPendingRef.current = false;
-        setMessage('');
-        setError('Microsoft sign-in was canceled.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      if (response.type === 'error') {
-        nativeMicrosoftPendingRef.current = false;
-        setMessage('');
-        setError(mapNativeAuthError('Microsoft', response.error));
-        setIsSubmitting(false);
-        return;
-      }
-
-      setMessage('Finishing Microsoft sign-in...');
-    } catch (error) {
-      nativeMicrosoftPendingRef.current = false;
-      setMessage('');
-      setError(mapNativeAuthError('Microsoft', error));
-      setIsSubmitting(false);
-    }
-  };
-
-  const showPasskeyNotice = () => {
-    setError('');
-    setMessage('Passkey login will be available after provider setup.');
-  };
-
-  const showSSONotice = () => {
-    setError('');
-    setMessage('SSO login will be available after enterprise provider setup.');
   };
 
   const switchMode = (nextMode: AuthMode) => {
@@ -798,49 +482,17 @@ export default function LoginScreen() {
                   <Pressable
                     disabled={isSubmitting}
                     onPress={() => submitProvider('google')}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    style={[styles.providerButton, styles.providerButtonWeb, isSubmitting ? styles.providerButtonDisabled : null]}>
                     <GoogleLogo size={24} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>Google</Text>
-                  </Pressable>
-
-                  <Pressable
-                    disabled={isSubmitting}
-                    onPress={() => submitProvider('facebook')}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
-                    <AppIcon color="#1877F2" family="community" name="facebook" size={24} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>Facebook</Text>
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Continue with Google</Text>
                   </Pressable>
 
                   <Pressable
                     disabled={isSubmitting}
                     onPress={() => submitProvider('apple')}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
+                    style={[styles.providerButton, styles.providerButtonWeb, isSubmitting ? styles.providerButtonDisabled : null]}>
                     <AppIcon color="#151515" family="community" name="apple" size={24} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>Apple</Text>
-                  </Pressable>
-
-                  <Pressable
-                    disabled={isSubmitting}
-                    onPress={() => submitProvider('azure')}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
-                    <AppIcon color="#00A4EF" family="community" name="microsoft" size={24} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>Microsoft</Text>
-                  </Pressable>
-
-                  <Pressable
-                    disabled={isSubmitting}
-                    onPress={showPasskeyNotice}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
-                    <AppIcon color="#232323" family="community" name="key-chain-variant" size={22} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>Passkey</Text>
-                  </Pressable>
-
-                  <Pressable
-                    disabled={isSubmitting}
-                    onPress={showSSONotice}
-                    style={[styles.providerButton, styles.providerButtonWeb]}>
-                    <AppIcon color="#232323" family="community" name="office-building-outline" size={22} />
-                    <Text style={[styles.providerText, styles.providerTextWeb]}>SSO</Text>
+                    <Text style={[styles.providerText, styles.providerTextWeb]}>Continue with Apple</Text>
                   </Pressable>
                 </View>
 
@@ -848,33 +500,17 @@ export default function LoginScreen() {
                   <Text style={styles.providerHintText}>{webFirebaseAuthSupport.message}</Text>
                 ) : null}
               </>
-            ) : isIos ? (
+            ) : Platform.OS !== 'web' ? (
               <>
-                {canUseNativeApple || canUseNativeGoogle || canUseNativeFacebook || canUseNativeMicrosoft ? (
+                {canUseNativeApple || canUseNativeGoogle ? (
                   <>
                     <View style={styles.dividerRow}>
                       <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>{t('login.with')}</Text>
+                      <Text style={styles.dividerText}>{t('login.with')}</Text>
                       <View style={styles.dividerLine} />
                     </View>
 
                     <View style={[styles.providerGroup, styles.providerGroupPhone]}>
-                      {canUseNativeApple ? (
-                        <Pressable
-                          disabled={isSubmitting}
-                          onPress={submitNativeApple}
-                          style={[
-                            styles.providerButton,
-                            styles.providerButtonPhone,
-                            isSubmitting ? styles.providerButtonDisabled : null,
-                          ]}>
-                          <View style={styles.providerIconWrap}>
-                            <AppIcon color="#151515" family="community" name="apple" size={26} />
-                          </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Apple`}</Text>
-                        </Pressable>
-                      ) : null}
-
                       {canUseNativeGoogle ? (
                         <Pressable
                           disabled={isSubmitting}
@@ -887,86 +523,23 @@ export default function LoginScreen() {
                           <View style={styles.providerIconWrap}>
                             <GoogleLogo size={24} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Google`}</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Google</Text>
                         </Pressable>
                       ) : null}
 
-                      {canUseNativeFacebook ? (
+                      {canUseNativeApple ? (
                         <Pressable
                           disabled={isSubmitting}
-                          onPress={submitNativeFacebook}
+                          onPress={submitNativeApple}
                           style={[
                             styles.providerButton,
                             styles.providerButtonPhone,
                             isSubmitting ? styles.providerButtonDisabled : null,
                           ]}>
                           <View style={styles.providerIconWrap}>
-                            <AppIcon color="#1877F2" family="community" name="facebook" size={26} />
+                            <AppIcon color="#151515" family="community" name="apple" size={26} />
                           </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Facebook`}</Text>
-                        </Pressable>
-                      ) : null}
-
-                      {canUseNativeMicrosoft ? (
-                        <Pressable
-                          disabled={isSubmitting}
-                          onPress={submitNativeMicrosoft}
-                          style={[
-                            styles.providerButton,
-                            styles.providerButtonPhone,
-                            isSubmitting ? styles.providerButtonDisabled : null,
-                          ]}>
-                          <View style={styles.providerIconWrap}>
-                            <AppIcon color="#00A4EF" family="community" name="microsoft" size={26} />
-                          </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Microsoft`}</Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  </>
-                ) : null}
-
-              </>
-            ) : Platform.OS === 'android' ? (
-              <>
-                {canUseNativeFacebook || canUseNativeMicrosoft ? (
-                  <>
-                    <View style={styles.dividerRow}>
-                      <View style={styles.dividerLine} />
-                      <Text style={styles.dividerText}>{t('login.with')}</Text>
-                      <View style={styles.dividerLine} />
-                    </View>
-
-                    <View style={[styles.providerGroup, styles.providerGroupPhone]}>
-                      {canUseNativeFacebook ? (
-                        <Pressable
-                          disabled={isSubmitting}
-                          onPress={submitNativeFacebook}
-                          style={[
-                            styles.providerButton,
-                            styles.providerButtonPhone,
-                            isSubmitting ? styles.providerButtonDisabled : null,
-                          ]}>
-                          <View style={styles.providerIconWrap}>
-                            <AppIcon color="#1877F2" family="community" name="facebook" size={26} />
-                          </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Facebook`}</Text>
-                        </Pressable>
-                      ) : null}
-
-                      {canUseNativeMicrosoft ? (
-                        <Pressable
-                          disabled={isSubmitting}
-                          onPress={submitNativeMicrosoft}
-                          style={[
-                            styles.providerButton,
-                            styles.providerButtonPhone,
-                            isSubmitting ? styles.providerButtonDisabled : null,
-                          ]}>
-                          <View style={styles.providerIconWrap}>
-                            <AppIcon color="#00A4EF" family="community" name="microsoft" size={26} />
-                          </View>
-                          <Text style={[styles.providerText, styles.providerTextPhone]}>{`Microsoft`}</Text>
+                          <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Apple</Text>
                         </Pressable>
                       ) : null}
                     </View>
@@ -1092,9 +665,16 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panelWeb: {
-    maxWidth: 360,
-    paddingHorizontal: 4,
-    paddingVertical: 8,
+    maxWidth: 520,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    paddingHorizontal: 28,
+    paddingVertical: 28,
+    shadowColor: '#000000',
+    shadowOpacity: 0.06,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   panelPhone: {
     maxWidth: 540,
@@ -1146,7 +726,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 6,
+    marginTop: 8,
   },
   dividerLine: {
     flex: 1,
@@ -1162,9 +742,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   providerGroupWeb: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
+    width: '100%',
+    flexDirection: 'column',
   },
   providerGroupPhone: {
     flexDirection: 'column',
@@ -1178,11 +757,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   providerButtonWeb: {
-    width: 102,
-    minHeight: 72,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    gap: 6,
+    width: '100%',
+    minHeight: 56,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    gap: 12,
   },
   providerButtonPhone: {
     flexDirection: 'row',
@@ -1204,7 +784,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   providerTextWeb: {
-    fontSize: 12,
+    fontSize: 15,
+    fontWeight: '500',
   },
   providerTextPhone: {
     fontSize: 14,
@@ -1281,7 +862,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   termsCopyWeb: {
-    textAlign: 'center',
+    textAlign: 'left',
   },
   mobileFooterLinks: {
     flexDirection: 'row',

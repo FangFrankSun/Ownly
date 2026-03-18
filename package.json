@@ -1,14 +1,22 @@
 {
   "name": "ownly",
   "main": "expo-router/entry",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "scripts": {
     "start": "expo start --port 8081",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android --port 8081",
     "ios": "expo start --ios --port 8081",
     "web": "expo start --web --port 8081",
-    "lint": "expo lint"
+    "web:export": "npx expo export --platform web && node ./scripts/prepare-web-dist.mjs",
+    "lint": "expo lint",
+    "ios:pods": "cd ios && pod install",
+    "macos:preview": "zsh ./scripts/preview-macos.sh",
+    "macos:preview:release": "CONFIGURATION=Release zsh ./scripts/preview-macos.sh",
+    "macos:archive": "zsh ./scripts/archive-macos.sh",
+    "macos:export:appstore": "zsh ./scripts/export-macos-app-store.sh",
+    "macos:export:developer-id": "zsh ./scripts/export-macos-developer-id.sh",
+    "macos:dmg": "zsh ./scripts/create-macos-dmg.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

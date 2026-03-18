@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "ownly-auth"
-  }
+  },
+  "targets": {
+    "ownly-auth": {
+      "hosting": {
+        "production": [
+          "ownly-auth"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
