@@ -166,7 +166,9 @@ MACOS_SIGNING_IDENTITY="Apple Distribution" \
 MACOS_PROFILE_SPECIFIER="YOUR_MAC_APP_STORE_PROFILE_NAME" \
 npm run macos:archive
 
-TEAM_ID=YOUR_APPLE_TEAM_ID npm run macos:export:appstore
+TEAM_ID=YOUR_APPLE_TEAM_ID \
+MACOS_PROFILE_SPECIFIER="YOUR_MAC_APP_STORE_PROFILE_NAME" \
+npm run macos:export:appstore
 ```
 
 - The App Store provisioning profile must match:
