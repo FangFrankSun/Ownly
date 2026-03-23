@@ -60,7 +60,7 @@ function AuthGate() {
     }
 
     if (isAuthenticated && inLoginScreen) {
-      router.replace('/dashboard');
+      router.replace('/tasks');
     }
   }, [isAuthenticated, isHydrated, pathname, router]);
 

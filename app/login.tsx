@@ -10,13 +10,14 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { AnimatedPressable } from '@/components/ui/animated-pressable';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/app/auth-context';
@@ -162,7 +163,7 @@ export default function LoginScreen() {
     setIsSubmitting(false);
     setError('');
     setMessage('');
-    router.replace('/dashboard');
+    router.replace('/tasks');
   }, [isAuthenticated, isSubmitting, isWeb, router]);
 
   useEffect(() => {
@@ -173,7 +174,7 @@ export default function LoginScreen() {
     setIsSubmitting(false);
     setError('');
     setMessage('');
-    router.replace('/dashboard');
+    router.replace('/tasks');
   }, [isAuthenticated, isWeb, router]);
 
   useEffect(() => {
@@ -248,7 +249,7 @@ export default function LoginScreen() {
       setMessage('');
       setError('');
       setIsSubmitting(false);
-      router.replace('/dashboard');
+      router.replace('/tasks');
     })();
   }, [nativeGoogleResponse, router, signInWithGoogleIdToken]);
 
@@ -273,12 +274,17 @@ export default function LoginScreen() {
     setMessage('');
     setError('');
     setIsSubmitting(false);
-    router.replace('/dashboard');
+    router.replace('/tasks');
   };
 
   const submitProvider = async (provider: OAuthProvider) => {
+    // Always reset state so the user can retry after closing a popup
+    setIsSubmitting(false);
     setError('');
     setMessage('');
+
+    // Small delay to let React flush the state reset before re-enabling
+    await new Promise((r) => setTimeout(r, 0));
 
     const attemptId = webPopupAttemptRef.current + 1;
     webPopupAttemptRef.current = attemptId;
@@ -287,6 +293,7 @@ export default function LoginScreen() {
     try {
       const result = await signInWithProvider(provider);
       if (webPopupAttemptRef.current !== attemptId) {
+        // A newer attempt superseded this one – let the newer one manage state.
         return;
       }
 
@@ -305,12 +312,10 @@ export default function LoginScreen() {
       setIsSubmitting(false);
       setMessage('');
       setError('');
-      router.replace('/dashboard');
+      router.replace('/tasks');
     } catch (error) {
-      if (webPopupAttemptRef.current !== attemptId) {
-        return;
-      }
-
+      // Always reset submitting state, even if a newer attempt exists,
+      // because the newer attempt may have also failed/been cancelled.
       setMessage('');
       setError(error instanceof Error ? error.message : 'Sign-in failed. Please try again.');
       setIsSubmitting(false);
@@ -369,7 +374,7 @@ export default function LoginScreen() {
       setMessage('');
       setError('');
       setIsSubmitting(false);
-      router.replace('/dashboard');
+      router.replace('/tasks');
     } catch (error) {
       nativeApplePendingRef.current = false;
       setMessage('');
@@ -463,15 +468,21 @@ export default function LoginScreen() {
           onScrollBeginDrag={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
           <View style={[styles.panel, Platform.OS === 'web' ? styles.panelWeb : styles.panelPhone]}>
-            <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>Ownly</Text>
-            </View>
+            <Animated.View entering={FadeInUp.duration(500).delay(100)}>
+              <View style={styles.brandMark}>
+                <Text style={styles.brandMarkText}>Ownly</Text>
+              </View>
+            </Animated.View>
 
-            <Text style={[styles.headline, !isWeb ? styles.headlinePhone : null]}>{t('login.title')}</Text>
-            <Text style={[styles.subheadline, !isWeb ? styles.subheadlinePhone : null]}>{t('login.subtitle')}</Text>
+            <Animated.View entering={FadeInDown.duration(400).delay(200)}>
+              <Text style={[styles.headline, !isWeb ? styles.headlinePhone : null]}>{t('login.title')}</Text>
+            </Animated.View>
+            <Animated.View entering={FadeInDown.duration(400).delay(300)}>
+              <Text style={[styles.subheadline, !isWeb ? styles.subheadlinePhone : null]}>{t('login.subtitle')}</Text>
+            </Animated.View>
 
             {isWeb ? (
-              <>
+              <Animated.View entering={FadeInDown.duration(400).delay(400)}>
                 <View style={styles.dividerRow}>
                   <View style={styles.dividerLine} />
                   <Text style={styles.dividerText}>{t('login.with')}</Text>
@@ -479,29 +490,27 @@ export default function LoginScreen() {
                 </View>
 
                 <View style={[styles.providerGroup, styles.providerGroupWeb]}>
-                  <Pressable
-                    disabled={isSubmitting}
+                  <AnimatedPressable
                     onPress={() => submitProvider('google')}
-                    style={[styles.providerButton, styles.providerButtonWeb, isSubmitting ? styles.providerButtonDisabled : null]}>
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
                     <GoogleLogo size={24} />
                     <Text style={[styles.providerText, styles.providerTextWeb]}>Continue with Google</Text>
-                  </Pressable>
+                  </AnimatedPressable>
 
-                  <Pressable
-                    disabled={isSubmitting}
+                  <AnimatedPressable
                     onPress={() => submitProvider('apple')}
-                    style={[styles.providerButton, styles.providerButtonWeb, isSubmitting ? styles.providerButtonDisabled : null]}>
+                    style={[styles.providerButton, styles.providerButtonWeb]}>
                     <AppIcon color="#151515" family="community" name="apple" size={24} />
                     <Text style={[styles.providerText, styles.providerTextWeb]}>Continue with Apple</Text>
-                  </Pressable>
+                  </AnimatedPressable>
                 </View>
 
                 {!webFirebaseAuthSupport.isSupported ? (
                   <Text style={styles.providerHintText}>{webFirebaseAuthSupport.message}</Text>
                 ) : null}
-              </>
+              </Animated.View>
             ) : Platform.OS !== 'web' ? (
-              <>
+              <Animated.View entering={FadeInDown.duration(400).delay(400)}>
                 {canUseNativeApple || canUseNativeGoogle ? (
                   <>
                     <View style={styles.dividerRow}>
@@ -512,7 +521,7 @@ export default function LoginScreen() {
 
                     <View style={[styles.providerGroup, styles.providerGroupPhone]}>
                       {canUseNativeGoogle ? (
-                        <Pressable
+                        <AnimatedPressable
                           disabled={isSubmitting}
                           onPress={submitNativeGoogle}
                           style={[
@@ -524,11 +533,11 @@ export default function LoginScreen() {
                             <GoogleLogo size={24} />
                           </View>
                           <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Google</Text>
-                        </Pressable>
+                        </AnimatedPressable>
                       ) : null}
 
                       {canUseNativeApple ? (
-                        <Pressable
+                        <AnimatedPressable
                           disabled={isSubmitting}
                           onPress={submitNativeApple}
                           style={[
@@ -540,17 +549,17 @@ export default function LoginScreen() {
                             <AppIcon color="#151515" family="community" name="apple" size={26} />
                           </View>
                           <Text style={[styles.providerText, styles.providerTextPhone]}>Continue with Apple</Text>
-                        </Pressable>
+                        </AnimatedPressable>
                       ) : null}
                     </View>
                   </>
                 ) : null}
 
-              </>
+              </Animated.View>
             ) : null}
 
             {shouldShowEmailForm ? (
-              <View style={styles.emailBlock}>
+              <Animated.View entering={FadeInDown.duration(400).delay(500)} style={styles.emailBlock}>
                 <View style={styles.dividerRow}>
                   <View style={styles.dividerLine} />
                   <Text style={styles.dividerText}>{t('login.emailSection')}</Text>
@@ -558,7 +567,7 @@ export default function LoginScreen() {
                 </View>
 
                 <View style={styles.modeRow}>
-                  <Pressable
+                  <AnimatedPressable
                     onPress={() => switchMode('signin')}
                     style={[
                       styles.modeButton,
@@ -566,8 +575,8 @@ export default function LoginScreen() {
                       mode === 'signin' && { backgroundColor: theme.secondary },
                     ]}>
                     <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>{t('login.signIn')}</Text>
-                  </Pressable>
-                  <Pressable
+                  </AnimatedPressable>
+                  <AnimatedPressable
                     onPress={() => switchMode('signup')}
                     style={[
                       styles.modeButton,
@@ -575,7 +584,7 @@ export default function LoginScreen() {
                       mode === 'signup' && { backgroundColor: theme.secondary },
                     ]}>
                     <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>{t('login.signUp')}</Text>
-                  </Pressable>
+                  </AnimatedPressable>
                 </View>
 
                 {mode === 'signup' ? (
@@ -610,15 +619,15 @@ export default function LoginScreen() {
                   value={password}
                 />
 
-                <Pressable
+                <AnimatedPressable
                   disabled={isSubmitting}
                   onPress={submitEmailAuth}
                   style={[styles.primaryButton, { backgroundColor: theme.primary }]}>
                   <Text style={styles.primaryButtonText}>
                     {isSubmitting ? 'Please wait...' : mode === 'signin' ? t('login.continue') : t('login.signUp')}
                   </Text>
-                </Pressable>
-              </View>
+                </AnimatedPressable>
+              </Animated.View>
             ) : null}
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}

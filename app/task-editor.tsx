@@ -13,10 +13,20 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
+import { AnimatedPressable } from '@/components/ui/animated-pressable';
+import Animated, {
+  FadeInDown,
+  FadeOutDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  formatTaskDuration,
   formatTaskDateTime,
   isValidIsoDate,
   toIsoWithDateAndTime,
@@ -109,37 +119,79 @@ function buildSpectrumColors() {
 
 const SPECTRUM_COLORS = buildSpectrumColors();
 const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
+const WHEEL_ITEM_HEIGHT = 44;
+const WHEEL_PADDING_ROWS = 2;
+const TIME_WHEEL_HOURS = Array.from({ length: 24 }, (_, index) => index);
+const TIME_WHEEL_MINUTES = Array.from({ length: 60 }, (_, index) => index);
+type ReminderOptionValue = 'none' | 'on-time' | '5m' | '30m' | '1h' | '1d';
+type RepeatOptionValue = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'weekday' | 'custom';
+type PickerMonthCell = {
+  key: string;
+  date: Date;
+  inMonth: boolean;
+};
 
-function buildDateOptions(days = 21) {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+const REMINDER_OPTIONS: { id: ReminderOptionValue; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'on-time', label: 'On time' },
+  { id: '5m', label: '5 minutes early' },
+  { id: '30m', label: '30 minutes early' },
+  { id: '1h', label: '1 hour early' },
+  { id: '1d', label: '1 day early' },
+];
 
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    return date;
+const REPEAT_OPTIONS: { id: RepeatOptionValue; label: string }[] = [
+  { id: 'none', label: 'None' },
+  { id: 'daily', label: 'Daily' },
+  { id: 'weekly', label: 'Weekly' },
+  { id: 'monthly', label: 'Monthly' },
+  { id: 'yearly', label: 'Yearly' },
+  { id: 'weekday', label: 'Every Weekday' },
+  { id: 'custom', label: 'Custom' },
+];
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addDays(baseDate: Date, days: number) {
+  const date = new Date(baseDate);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function sameDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function buildPickerMonthCells(monthDate: Date): PickerMonthCell[] {
+  const first = startOfMonth(monthDate);
+  const start = addDays(first, -first.getDay());
+  const daysInMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+  const leadingDays = first.getDay();
+  const visibleCellCount = leadingDays + daysInMonth <= 35 ? 35 : 42;
+  return Array.from({ length: visibleCellCount }, (_, index) => {
+    const date = addDays(start, index);
+    return {
+      key: date.toISOString(),
+      date,
+      inMonth: date.getMonth() === monthDate.getMonth() && date.getFullYear() === monthDate.getFullYear(),
+    };
   });
 }
 
-function buildTimeOptions(localeTag: string) {
-  const options: { key: string; hour: number; minute: number; label: string }[] = [];
+function monthName(date: Date, localeTag: string) {
+  return date.toLocaleDateString(localeTag, { month: 'long' });
+}
 
-  for (let hour = 0; hour < 24; hour += 1) {
-    for (const minute of [0, 30]) {
-      const key = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-      const display = new Date();
-      display.setHours(hour, minute, 0, 0);
-
-      options.push({
-        key,
-        hour,
-        minute,
-        label: display.toLocaleTimeString(localeTag, { hour: 'numeric', minute: '2-digit' }),
-      });
-    }
-  }
-
-  return options;
+function getNextMonday(baseDate: Date) {
+  const day = baseDate.getDay();
+  const offset = day === 1 ? 7 : (8 - day) % 7;
+  return addDays(baseDate, offset === 0 ? 7 : offset);
 }
 
 function formatManualTime(hour: number, minute: number) {
@@ -175,6 +227,22 @@ function normalizeHexColor(value: string) {
     return null;
   }
   return candidate;
+}
+
+function colorWithAlpha(hexColor: string, alpha: number) {
+  const safeAlpha = Math.max(0, Math.min(1, alpha));
+  const normalized = normalizeHexColor(hexColor);
+  if (!normalized) {
+    return hexColor;
+  }
+  const r = Number.parseInt(normalized.slice(1, 3), 16);
+  const g = Number.parseInt(normalized.slice(3, 5), 16);
+  const b = Number.parseInt(normalized.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function toTaskSaveErrorMessage(raw: string) {
@@ -241,9 +309,9 @@ function PaletteSwatch({ color, selected, size, onPress }: PaletteSwatchProps) {
 
   return (
     <Animated.View style={[styles.paletteSwatchPress, { width: size, height: size }, animatedPressStyle]}>
-      <Pressable onPress={onPress} style={styles.paletteSwatchHitbox}>
+      <AnimatedPressable onPress={onPress} pressScale={0.9} style={styles.paletteSwatchHitbox}>
         <Animated.View style={[styles.paletteSwatch, { backgroundColor: color }, animatedSwatchStyle]} />
-      </Pressable>
+      </AnimatedPressable>
     </Animated.View>
   );
 }
@@ -299,6 +367,7 @@ export default function TaskEditorScreen() {
 
   const [categoryEditMode, setCategoryEditMode] = useState(false);
   const [categoryNameDrafts, setCategoryNameDrafts] = useState<Record<string, string>>({});
+  const [inlineCategoryEditingId, setInlineCategoryEditingId] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [colorPaletteOpen, setColorPaletteOpen] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
@@ -313,12 +382,17 @@ export default function TaskEditorScreen() {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerDate, setPickerDate] = useState(new Date(initialSchedule));
-  const [pickerHour, setPickerHour] = useState(new Date(initialSchedule).getHours());
-  const [pickerMinute, setPickerMinute] = useState(new Date(initialSchedule).getMinutes() >= 30 ? 30 : 0);
+  const [pickerMonth, setPickerMonth] = useState(startOfMonth(new Date(initialSchedule)));
   const [manualTime, setManualTime] = useState(() =>
     formatManualTime(new Date(initialSchedule).getHours(), new Date(initialSchedule).getMinutes())
   );
   const [durationInput, setDurationInput] = useState(String(editingTask?.durationMinutes ?? 60));
+  const [reminderOption, setReminderOption] = useState<ReminderOptionValue>('none');
+  const [repeatOption, setRepeatOption] = useState<RepeatOptionValue>(editingTask?.repeatable ? 'daily' : 'none');
+  const [constantReminder, setConstantReminder] = useState(false);
+  const [pickerOverlay, setPickerOverlay] = useState<'time' | 'duration' | 'reminder' | 'repeat' | null>(null);
+  const [timeWheelHour, setTimeWheelHour] = useState(new Date(initialSchedule).getHours());
+  const [timeWheelMinute, setTimeWheelMinute] = useState(new Date(initialSchedule).getMinutes());
   const [pickerError, setPickerError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -327,14 +401,14 @@ export default function TaskEditorScreen() {
   const titleInputRef = useRef<TextInput | null>(null);
   const notesInputRef = useRef<TextInput | null>(null);
   const newCategoryInputRef = useRef<TextInput | null>(null);
-  const manualTimeInputRef = useRef<TextInput | null>(null);
   const durationInputRef = useRef<TextInput | null>(null);
+  const timeHourWheelRef = useRef<ScrollView | null>(null);
+  const timeMinuteWheelRef = useRef<ScrollView | null>(null);
 
   const dismissEditorInputs = () => {
     titleInputRef.current?.blur();
     notesInputRef.current?.blur();
     newCategoryInputRef.current?.blur();
-    manualTimeInputRef.current?.blur();
     durationInputRef.current?.blur();
     Keyboard.dismiss();
   };
@@ -377,6 +451,12 @@ export default function TaskEditorScreen() {
   }, [categories]);
 
   useEffect(() => {
+    if (!categoryEditMode) {
+      setInlineCategoryEditingId(null);
+    }
+  }, [categoryEditMode]);
+
+  useEffect(() => {
     if (!editingTask) {
       return;
     }
@@ -391,9 +471,10 @@ export default function TaskEditorScreen() {
 
     const current = new Date(editingTask.scheduledAt);
     setPickerDate(current);
-    setPickerHour(current.getHours());
-    setPickerMinute(current.getMinutes() >= 30 ? 30 : 0);
     setManualTime(formatManualTime(current.getHours(), current.getMinutes()));
+    setTimeWheelHour(current.getHours());
+    setTimeWheelMinute(current.getMinutes());
+    setRepeatOption(editingTask.repeatable ? 'daily' : 'none');
   }, [defaultCategoryId, editingTask]);
 
   useEffect(() => {
@@ -457,8 +538,7 @@ export default function TaskEditorScreen() {
     scheduledAt,
   ]);
 
-  const dateOptions = useMemo(() => buildDateOptions(), []);
-  const timeOptions = useMemo(() => buildTimeOptions(localeTag), [localeTag]);
+  const pickerMonthCells = useMemo(() => buildPickerMonthCells(pickerMonth), [pickerMonth]);
   const paletteSwatchSize = useMemo(() => {
     if (paletteGridWidth <= 0) {
       return 18;
@@ -470,10 +550,13 @@ export default function TaskEditorScreen() {
   const openPicker = () => {
     const current = isValidIsoDate(scheduledAt) ? new Date(scheduledAt) : new Date();
     setPickerDate(current);
-    setPickerHour(current.getHours());
-    setPickerMinute(current.getMinutes() >= 30 ? 30 : 0);
+    setPickerMonth(startOfMonth(current));
     setManualTime(formatManualTime(current.getHours(), current.getMinutes()));
+    setTimeWheelHour(current.getHours());
+    setTimeWheelMinute(current.getMinutes());
     setDurationInput(String(durationMinutes));
+    setRepeatOption(repeatable ? 'daily' : 'none');
+    setPickerOverlay(null);
     setPickerError('');
     setPickerOpen(true);
   };
@@ -492,14 +575,50 @@ export default function TaskEditorScreen() {
     }
 
     const normalizedDuration = Math.round(parsedDuration);
-    setPickerHour(parsed.hour);
-    setPickerMinute(parsed.minute);
     setScheduledAt(toIsoWithDateAndTime(pickerDate, parsed.hour, parsed.minute));
     setDurationMinutes(normalizedDuration);
     setDurationInput(String(normalizedDuration));
+    setRepeatable(repeatOption !== 'none');
     setPickerError('');
+    setPickerOverlay(null);
     setPickerOpen(false);
   };
+
+  const openPickerOverlay = (overlay: 'time' | 'duration' | 'reminder' | 'repeat') => {
+    if (overlay === 'time') {
+      const parsed = parseManualTime(manualTime) ?? {
+        hour: new Date().getHours(),
+        minute: new Date().getMinutes(),
+      };
+      setTimeWheelHour(parsed.hour);
+      setTimeWheelMinute(parsed.minute);
+    }
+    setPickerOverlay(overlay);
+  };
+
+  useEffect(() => {
+    if (pickerOverlay !== 'time') {
+      return;
+    }
+    const task = setTimeout(() => {
+      timeHourWheelRef.current?.scrollTo({
+        y: timeWheelHour * WHEEL_ITEM_HEIGHT,
+        animated: false,
+      });
+      timeMinuteWheelRef.current?.scrollTo({
+        y: timeWheelMinute * WHEEL_ITEM_HEIGHT,
+        animated: false,
+      });
+    }, 0);
+
+    return () => clearTimeout(task);
+  }, [pickerOverlay, timeWheelHour, timeWheelMinute]);
+
+  useEffect(() => {
+    if (pickerOverlay === 'time') {
+      setManualTime(formatManualTime(timeWheelHour, timeWheelMinute));
+    }
+  }, [pickerOverlay, timeWheelHour, timeWheelMinute]);
 
   const handleCreateCategory = () => {
     dismissEditorInputs();
@@ -533,7 +652,8 @@ export default function TaskEditorScreen() {
 
   const handleSaveCategoryName = (id: string) => {
     dismissEditorInputs();
-    const nextName = categoryNameDrafts[id]?.trim() ?? '';
+    const currentName = categories.find((category) => category.id === id)?.name ?? '';
+    const nextName = (categoryNameDrafts[id] ?? currentName).trim();
     if (!nextName) {
       setError(t('taskEditor.categoryNameRequired'));
       return;
@@ -548,6 +668,7 @@ export default function TaskEditorScreen() {
     }
 
     renameCategory(id, nextName);
+    setInlineCategoryEditingId((previous) => (previous === id ? null : previous));
     setError('');
   };
 
@@ -681,6 +802,11 @@ export default function TaskEditorScreen() {
 
   const isEditingTaskLoading = isEditing && !editingTask && (!isReady || !missingTaskTimedOut);
   const isEditingTaskMissing = isEditing && !editingTask && isReady && missingTaskTimedOut;
+  const selectedReminderLabel = REMINDER_OPTIONS.find((option) => option.id === reminderOption)?.label ?? 'None';
+  const selectedRepeatLabel = REPEAT_OPTIONS.find((option) => option.id === repeatOption)?.label ?? 'None';
+  const parsedDurationInput = Number(durationInput.trim());
+  const previewDurationMinutes =
+    Number.isFinite(parsedDurationInput) && parsedDurationInput > 0 ? Math.round(parsedDurationInput) : durationMinutes;
 
   if (isEditingTaskLoading || isEditingTaskMissing) {
     return (
@@ -694,11 +820,11 @@ export default function TaskEditorScreen() {
               ? 'Ownly is loading the latest task data so editing stays in sync across browsers.'
               : 'This task could not be loaded. Go back to Tasks, let sync finish, then open it again.'}
           </Text>
-          <Pressable
+          <AnimatedPressable
             onPress={() => router.replace('/tasks')}
             style={[styles.loadingStateButton, { backgroundColor: theme.primary }]}>
             <Text style={styles.loadingStateButtonText}>Back to Tasks</Text>
-          </Pressable>
+          </AnimatedPressable>
         </View>
       </View>
     );
@@ -723,17 +849,17 @@ export default function TaskEditorScreen() {
           onScrollBeginDrag={Keyboard.dismiss}
           showsVerticalScrollIndicator={false}>
           <View style={styles.topRow}>
-            <Pressable onPress={() => router.back()} style={styles.iconButton}>
+            <AnimatedPressable onPress={() => router.back()} pressScale={0.9} style={styles.iconButton}>
               <AppIcon color="#4A5576" name="close" size={22} />
-            </Pressable>
+            </AnimatedPressable>
             <View style={styles.headerCopy}>
               <Text style={styles.title}>{editingTask ? t('taskEditor.titleEdit') : t('taskEditor.titleCreate')}</Text>
               <Text style={styles.headerSubtitle}>{t('taskEditor.subtitle')}</Text>
             </View>
             {editingTask ? (
-              <Pressable disabled={isSaving} onPress={handleDeleteTask} style={[styles.deleteTopButton, isSaving && styles.disabledButton]}>
+              <AnimatedPressable disabled={isSaving} onPress={handleDeleteTask} pressScale={0.9} style={[styles.deleteTopButton, isSaving && styles.disabledButton]}>
                 <AppIcon color="#C7364A" name="delete-outline" size={19} />
-              </Pressable>
+              </AnimatedPressable>
             ) : (
               <View style={styles.headerSpacer} />
             )}
@@ -769,29 +895,16 @@ export default function TaskEditorScreen() {
               textAlignVertical="top"
             />
             <Text style={styles.inputLabel}>{t('taskEditor.labelDateDuration')}</Text>
-            <Pressable onPress={openPicker} style={styles.pickerButton}>
+            <AnimatedPressable onPress={openPicker} style={styles.pickerButton}>
               <View style={[styles.pickerIconBadge, { backgroundColor: `${theme.primary}20` }]}>
                 <AppIcon color={theme.primary} name="event" size={17} />
               </View>
               <View style={styles.pickerTextBlock}>
                 <Text style={styles.pickerText}>{formatTaskDateTime(scheduledAt, localeTag)}</Text>
-                <Text style={styles.pickerSubtext}>{t('common.minutesLong', { minutes: durationMinutes })}</Text>
+                <Text style={styles.pickerSubtext}>{formatTaskDuration(durationMinutes)}</Text>
               </View>
               <AppIcon color="#6A7798" name="chevron-right" size={20} />
-            </Pressable>
-            <View style={styles.repeatRow}>
-              <View style={styles.repeatTextBlock}>
-                <Text style={styles.repeatLabel}>{t('taskEditor.repeatLabel')}</Text>
-                <Text style={styles.repeatSubtext}>{t('taskEditor.repeatSubtext')}</Text>
-              </View>
-              <Switch
-                ios_backgroundColor="#CCD3E3"
-                onValueChange={setRepeatable}
-                thumbColor={repeatable ? theme.primary : '#F3F5FB'}
-                trackColor={{ false: '#CCD3E3', true: `${theme.primary}66` }}
-                value={repeatable}
-              />
-            </View>
+            </AnimatedPressable>
           </View>
 
           <View style={styles.card}>
@@ -801,68 +914,91 @@ export default function TaskEditorScreen() {
               </View>
               <Text style={styles.sectionTitle}>{t('taskEditor.sectionCategories')}</Text>
               <View style={styles.sectionHeadingSpacer} />
-              <Pressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
+              <AnimatedPressable onPress={() => setCategoryEditMode((prev) => !prev)} style={styles.smallButton}>
                 <Text style={styles.smallButtonText}>{categoryEditMode ? t('common.done') : t('common.edit')}</Text>
-              </Pressable>
+              </AnimatedPressable>
             </View>
             <View style={styles.categoryList}>
               {categories.map((category) => {
                 const selected = category.id === categoryId;
+                const isInlineEditing = categoryEditMode && inlineCategoryEditingId === category.id;
 
                 return (
                   <View key={category.id} style={styles.categoryRowGroup}>
                     <View style={styles.categoryRow}>
-                      <Pressable
-                        onPress={() => setCategoryId(category.id)}
-                        style={[
-                          styles.categoryChip,
-                          selected && {
-                            borderColor: category.color,
-                            backgroundColor: `${category.color}14`,
-                          },
-                        ]}>
-                        <Text
+                      {isInlineEditing ? (
+                        <View
                           style={[
-                            styles.categoryChipText,
-                            selected && {
-                              color: category.color,
+                            styles.categoryChip,
+                            styles.categoryChipEditing,
+                            {
+                              borderColor: category.color,
+                              backgroundColor: `${category.color}14`,
                             },
                           ]}>
-                          {localizeTaskCategoryName(category.name, effectiveLanguage)}
-                        </Text>
-                      </Pressable>
-                      <Pressable
+                          <TextInput
+                            autoFocus
+                            onBlur={() => handleSaveCategoryName(category.id)}
+                            onChangeText={(value) =>
+                              setCategoryNameDrafts((previous) => ({
+                                ...previous,
+                                [category.id]: value,
+                              }))
+                            }
+                            onSubmitEditing={() => handleSaveCategoryName(category.id)}
+                            placeholder={t('taskEditor.placeholderNewCategory')}
+                            placeholderTextColor="#8E96AC"
+                            returnKeyType="done"
+                            selectTextOnFocus
+                            style={[styles.categoryInlineInput, { color: category.color }]}
+                            value={categoryNameDrafts[category.id] ?? category.name}
+                          />
+                        </View>
+                      ) : (
+                        <AnimatedPressable
+                          onPress={() => {
+                            if (categoryEditMode) {
+                              setInlineCategoryEditingId(category.id);
+                              setError('');
+                              return;
+                            }
+                            setCategoryId(category.id);
+                          }}
+                          style={[
+                            styles.categoryChip,
+                            selected && {
+                              borderColor: category.color,
+                              backgroundColor: `${category.color}14`,
+                            },
+                          ]}>
+                          <Text
+                            style={[
+                              styles.categoryChipText,
+                              selected && {
+                                color: category.color,
+                              },
+                            ]}>
+                            {localizeTaskCategoryName(category.name, effectiveLanguage)}
+                          </Text>
+                        </AnimatedPressable>
+                      )}
+                      <AnimatedPressable
                         onPress={() => openCategoryColorPicker(category.id, category.color)}
+                        pressScale={0.9}
                         style={styles.categoryColorButton}>
                         <View style={[styles.categoryColorDot, { backgroundColor: category.color }]} />
-                      </Pressable>
+                      </AnimatedPressable>
+                      {categoryEditMode && isInlineEditing ? (
+                        <AnimatedPressable onPress={() => handleSaveCategoryName(category.id)} pressScale={0.9} style={styles.categoryInlineSaveButton}>
+                          <AppIcon color="#2F52D0" name="check" size={18} />
+                        </AnimatedPressable>
+                      ) : null}
                       {categoryEditMode ? (
-                        <Pressable onPress={() => handleDeleteCategory(category.id)} style={styles.deleteCategoryButton}>
+                        <AnimatedPressable onPress={() => handleDeleteCategory(category.id)} pressScale={0.9} style={styles.deleteCategoryButton}>
                           <AppIcon color="#C7364A" name="delete-outline" size={18} />
-                        </Pressable>
+                        </AnimatedPressable>
                       ) : null}
                     </View>
-                    {categoryEditMode ? (
-                      <View style={styles.categoryEditRow}>
-                        <TextInput
-                          onChangeText={(value) =>
-                            setCategoryNameDrafts((previous) => ({
-                              ...previous,
-                              [category.id]: value,
-                            }))
-                          }
-                          placeholder={t('taskEditor.placeholderNewCategory')}
-                          placeholderTextColor="#8E96AC"
-                          style={styles.categoryEditInput}
-                          value={categoryNameDrafts[category.id] ?? category.name}
-                          returnKeyType="done"
-                          onSubmitEditing={() => handleSaveCategoryName(category.id)}
-                        />
-                        <Pressable onPress={() => handleSaveCategoryName(category.id)} style={styles.categorySaveButton}>
-                          <Text style={styles.categorySaveButtonText}>{t('common.save')}</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
                   </View>
                 );
               })}
@@ -879,9 +1015,9 @@ export default function TaskEditorScreen() {
               returnKeyType="done"
               onSubmitEditing={handleCreateCategory}
             />
-            <Pressable onPress={handleCreateCategory} style={styles.secondaryButton}>
+            <AnimatedPressable onPress={handleCreateCategory} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>{t('taskEditor.addCategory')}</Text>
-            </Pressable>
+            </AnimatedPressable>
           </View>
         </ScrollView>
 
@@ -894,7 +1030,7 @@ export default function TaskEditorScreen() {
             },
           ]}>
           <View style={styles.bottomActionCard}>
-            <Pressable
+            <AnimatedPressable
               disabled={isSaving}
               onPress={handleSave}
               style={[
@@ -905,7 +1041,7 @@ export default function TaskEditorScreen() {
               <Text style={styles.primaryButtonText}>
                 {editingTask ? t('taskEditor.saveChanges') : t('taskEditor.createTask')}
               </Text>
-            </Pressable>
+            </AnimatedPressable>
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
           </View>
         </View>
@@ -926,76 +1062,227 @@ export default function TaskEditorScreen() {
                 style={styles.modalCardScroll}>
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
                 <Text style={styles.modalTitle}>{t('taskEditor.chooseDateTime')}</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStrip}>
-                  {dateOptions.map((dateOption) => {
-                    const selected = dateOption.toDateString() === pickerDate.toDateString();
-                    return (
-                      <Pressable
-                        key={dateOption.toISOString()}
-                        onPress={() => setPickerDate(dateOption)}
-                        style={[
-                          styles.datePill,
-                          selected && styles.datePillActive,
-                          selected && { backgroundColor: theme.primary },
-                        ]}>
-                        <Text style={[styles.datePillWeekday, selected && styles.datePillTextActive]}>
-                          {dateOption.toLocaleDateString(localeTag, { weekday: 'short' })}
-                        </Text>
-                        <Text style={[styles.datePillDay, selected && styles.datePillTextActive]}>
-                          {dateOption.getDate()}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                <ScrollView style={styles.timeGrid} contentContainerStyle={styles.timeGridContent}>
-                  {timeOptions.map((option) => {
-                    const selected = option.hour === pickerHour && option.minute === pickerMinute;
-
-                    return (
-                      <Pressable
-                        key={option.key}
-                        onPress={() => {
-                          setPickerHour(option.hour);
-                          setPickerMinute(option.minute);
-                          setManualTime(formatManualTime(option.hour, option.minute));
-                          setPickerError('');
-                        }}
-                        style={[
-                          styles.timeOption,
-                          selected && styles.timeOptionActive,
-                          selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}1F` },
-                        ]}>
-                        <Text
-                          style={[
-                            styles.timeOptionText,
-                            selected && styles.timeOptionTextActive,
-                            selected && { color: theme.primary },
-                          ]}>
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-
-                <View style={styles.manualTimeRow}>
-                  <Text style={styles.manualTimeLabel}>{t('taskEditor.exactTime')}</Text>
-                  <TextInput
-                    ref={manualTimeInputRef}
-                    onChangeText={setManualTime}
-                    value={manualTime}
-                    placeholder={t('taskEditor.manualTimePlaceholder')}
-                    placeholderTextColor="#8E96AC"
-                    style={styles.manualTimeInput}
-                    keyboardType="numbers-and-punctuation"
-                    returnKeyType="done"
-                  />
+                <View style={styles.pickerQuickActionsRow}>
+                  <AnimatedPressable
+                    onPress={() => {
+                      const date = new Date();
+                      setPickerDate(date);
+                      setPickerMonth(startOfMonth(date));
+                    }}
+                    style={[styles.pickerQuickAction, { borderColor: colorWithAlpha(theme.primary, 0.2), backgroundColor: colorWithAlpha(theme.primary, 0.05) }]}>
+                    <AppIcon color={theme.primary} name="today" size={22} />
+                    <Text style={styles.pickerQuickActionText}>Today</Text>
+                  </AnimatedPressable>
+                  <AnimatedPressable
+                    onPress={() => {
+                      const date = addDays(new Date(), 1);
+                      setPickerDate(date);
+                      setPickerMonth(startOfMonth(date));
+                    }}
+                    style={[styles.pickerQuickAction, { borderColor: colorWithAlpha(theme.primary, 0.2), backgroundColor: colorWithAlpha(theme.primary, 0.05) }]}>
+                    <AppIcon color={theme.primary} name="wb-sunny" size={22} />
+                    <Text style={styles.pickerQuickActionText}>Tomorrow</Text>
+                  </AnimatedPressable>
+                  <AnimatedPressable
+                    onPress={() => {
+                      const date = getNextMonday(new Date());
+                      setPickerDate(date);
+                      setPickerMonth(startOfMonth(date));
+                    }}
+                    style={[styles.pickerQuickAction, { borderColor: colorWithAlpha(theme.primary, 0.2), backgroundColor: colorWithAlpha(theme.primary, 0.05) }]}>
+                    <AppIcon color={theme.primary} name="event" size={22} />
+                    <Text style={styles.pickerQuickActionText}>Next Monday</Text>
+                  </AnimatedPressable>
+                  <AnimatedPressable
+                    onPress={() => {
+                      const evening = new Date();
+                      evening.setHours(20, 0, 0, 0);
+                      setPickerDate(evening);
+                      setPickerMonth(startOfMonth(evening));
+                      setManualTime('20:00');
+                    }}
+                    style={[styles.pickerQuickAction, { borderColor: colorWithAlpha(theme.primary, 0.2), backgroundColor: colorWithAlpha(theme.primary, 0.05) }]}>
+                    <AppIcon color={theme.primary} name="bedtime" size={22} />
+                    <Text style={styles.pickerQuickActionText}>Today Evening</Text>
+                  </AnimatedPressable>
                 </View>
 
-                <View style={styles.manualTimeRow}>
-                  <Text style={styles.manualTimeLabel}>{t('taskEditor.durationShort')}</Text>
+                <View style={styles.pickerMonthHeader}>
+                  <AnimatedPressable
+                    onPress={() => setPickerMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                    style={styles.pickerMonthNavButton}>
+                    <AppIcon color="#929CB3" name="chevron-left" size={22} />
+                  </AnimatedPressable>
+                  <Text style={styles.pickerMonthTitle}>{monthName(pickerMonth, localeTag)}</Text>
+                  <AnimatedPressable
+                    onPress={() => setPickerMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                    style={styles.pickerMonthNavButton}>
+                    <AppIcon color="#929CB3" name="chevron-right" size={22} />
+                  </AnimatedPressable>
+                </View>
+
+                <View style={styles.pickerWeekHeader}>
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, index) => (
+                    <Text key={`${label}-${index}`} style={styles.pickerWeekLabel}>
+                      {label}
+                    </Text>
+                  ))}
+                </View>
+                <View style={styles.pickerCalendarGrid}>
+                  {pickerMonthCells.map((cell) => {
+                    const selected = sameDay(cell.date, pickerDate);
+                    return (
+                      <AnimatedPressable
+                        key={cell.key}
+                        onPress={() => {
+                          setPickerDate(cell.date);
+                          setPickerMonth(startOfMonth(cell.date));
+                          setPickerError('');
+                        }}
+                        style={[styles.pickerDayCell, selected ? { backgroundColor: theme.primary } : null]}>
+                        <Text
+                          style={[
+                            styles.pickerDayText,
+                            !cell.inMonth ? styles.pickerDayTextMuted : null,
+                            selected ? styles.pickerDayTextSelected : null,
+                          ]}>
+                          {cell.date.getDate()}
+                        </Text>
+                      </AnimatedPressable>
+                    );
+                  })}
+                </View>
+
+                <View style={[styles.pickerOptionCard, { borderColor: colorWithAlpha(theme.primary, 0.2), backgroundColor: colorWithAlpha(theme.primary, 0.05) }]}>
+                  <AnimatedPressable onPress={() => openPickerOverlay('time')} style={[styles.pickerOptionRow, styles.pickerOptionRowButton]}>
+                    <View style={styles.pickerOptionLabelWrap}>
+                      <AppIcon color={theme.primary} name="schedule" size={20} />
+                      <Text style={styles.pickerOptionLabel}>Time</Text>
+                    </View>
+                    <View style={styles.pickerOptionValueWrap}>
+                      <Text style={[styles.pickerOptionValue, { color: theme.primary }]}>{manualTime}</Text>
+                      <AppIcon color="#97A1B8" name="chevron-right" size={18} />
+                    </View>
+                  </AnimatedPressable>
+
+                  <AnimatedPressable onPress={() => openPickerOverlay('duration')} style={[styles.pickerOptionRow, styles.pickerOptionRowButton]}>
+                    <View style={styles.pickerOptionLabelWrap}>
+                      <AppIcon color={theme.primary} name="timer" size={20} />
+                      <Text style={styles.pickerOptionLabel}>Duration</Text>
+                    </View>
+                    <View style={styles.pickerOptionValueWrap}>
+                      <Text style={[styles.pickerOptionValue, { color: theme.primary }]}>{formatTaskDuration(previewDurationMinutes)}</Text>
+                      <AppIcon color="#97A1B8" name="chevron-right" size={18} />
+                    </View>
+                  </AnimatedPressable>
+
+                  <AnimatedPressable onPress={() => openPickerOverlay('reminder')} style={[styles.pickerOptionRow, styles.pickerOptionRowButton]}>
+                    <View style={styles.pickerOptionLabelWrap}>
+                      <AppIcon color={theme.primary} name="alarm" size={20} />
+                      <Text style={styles.pickerOptionLabel}>Reminder</Text>
+                    </View>
+                    <View style={styles.pickerOptionValueWrap}>
+                      <Text style={[styles.pickerOptionValue, reminderOption !== 'none' ? { color: theme.primary } : null]}>{selectedReminderLabel}</Text>
+                      <AppIcon color="#97A1B8" name="chevron-right" size={18} />
+                    </View>
+                  </AnimatedPressable>
+
+                  <AnimatedPressable onPress={() => openPickerOverlay('repeat')} style={[styles.pickerOptionRow, styles.pickerOptionRowButton, styles.pickerOptionRowButtonLast]}>
+                    <View style={styles.pickerOptionLabelWrap}>
+                      <AppIcon color="#7C859A" name="repeat" size={20} />
+                      <Text style={styles.pickerOptionLabel}>Repeat</Text>
+                    </View>
+                    <View style={styles.pickerOptionValueWrap}>
+                      <Text style={[styles.pickerOptionValue, repeatOption !== 'none' ? { color: theme.primary } : null]}>{selectedRepeatLabel}</Text>
+                      <AppIcon color="#97A1B8" name="chevron-right" size={18} />
+                    </View>
+                  </AnimatedPressable>
+                </View>
+                {pickerError ? <Text style={styles.pickerErrorText}>{pickerError}</Text> : null}
+
+                <View style={styles.modalActions}>
+                  <AnimatedPressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
+                    <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
+                  </AnimatedPressable>
+                  <AnimatedPressable
+                    onPress={applyPicker}
+                    style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.primaryButtonText}>{t('common.apply')}</Text>
+                  </AnimatedPressable>
+                </View>
+              </ScrollView>
+
+              {pickerOverlay ? (
+                <Pressable onPress={() => setPickerOverlay(null)} style={styles.pickerOverlayBackdrop} />
+              ) : null}
+
+              {pickerOverlay === 'time' ? (
+                <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={styles.pickerOverlayCard}>
+                  <Text style={styles.pickerOverlayTitle}>Time</Text>
+                  <View style={styles.timeWheelRow}>
+                    <View style={styles.timeWheelColumnWrap}>
+                      <View style={[styles.timeWheelSelectionBand, { backgroundColor: colorWithAlpha(theme.primary, 0.12) }]} />
+                      <ScrollView
+                        ref={timeHourWheelRef}
+                        decelerationRate="fast"
+                        showsVerticalScrollIndicator={false}
+                        snapToInterval={WHEEL_ITEM_HEIGHT}
+                        style={styles.timeWheelScroll}
+                        onMomentumScrollEnd={(event) => {
+                          const index = clamp(
+                            Math.round(event.nativeEvent.contentOffset.y / WHEEL_ITEM_HEIGHT),
+                            0,
+                            TIME_WHEEL_HOURS.length - 1
+                          );
+                          setTimeWheelHour(index);
+                        }}
+                        contentContainerStyle={styles.timeWheelContent}>
+                        {TIME_WHEEL_HOURS.map((hour) => (
+                          <View key={`hour-${hour}`} style={styles.timeWheelItem}>
+                            <Text style={[styles.timeWheelText, hour === timeWheelHour ? styles.timeWheelTextActive : null]}>
+                              {String(hour).padStart(2, '0')}
+                            </Text>
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+                    <Text style={styles.timeWheelSeparator}>:</Text>
+                    <View style={styles.timeWheelColumnWrap}>
+                      <View style={[styles.timeWheelSelectionBand, { backgroundColor: colorWithAlpha(theme.primary, 0.12) }]} />
+                      <ScrollView
+                        ref={timeMinuteWheelRef}
+                        decelerationRate="fast"
+                        showsVerticalScrollIndicator={false}
+                        snapToInterval={WHEEL_ITEM_HEIGHT}
+                        style={styles.timeWheelScroll}
+                        onMomentumScrollEnd={(event) => {
+                          const index = clamp(
+                            Math.round(event.nativeEvent.contentOffset.y / WHEEL_ITEM_HEIGHT),
+                            0,
+                            TIME_WHEEL_MINUTES.length - 1
+                          );
+                          setTimeWheelMinute(index);
+                        }}
+                        contentContainerStyle={styles.timeWheelContent}>
+                        {TIME_WHEEL_MINUTES.map((minute) => (
+                          <View key={`minute-${minute}`} style={styles.timeWheelItem}>
+                            <Text style={[styles.timeWheelText, minute === timeWheelMinute ? styles.timeWheelTextActive : null]}>
+                              {String(minute).padStart(2, '0')}
+                            </Text>
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  </View>
+                  <AnimatedPressable onPress={() => setPickerOverlay(null)} style={[styles.pickerOverlayDoneButton, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.pickerOverlayDoneButtonText}>Done</Text>
+                  </AnimatedPressable>
+                </Animated.View>
+              ) : null}
+
+              {pickerOverlay === 'duration' ? (
+                <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={styles.pickerOverlayCard}>
+                  <Text style={styles.pickerOverlayTitle}>Duration</Text>
                   <TextInput
                     ref={durationInputRef}
                     onChangeText={setDurationInput}
@@ -1006,43 +1293,79 @@ export default function TaskEditorScreen() {
                     keyboardType="number-pad"
                     returnKeyType="done"
                   />
-                </View>
-
-                <View style={styles.durationPresetRow}>
-                  {DURATION_PRESETS.map((value) => {
-                    const selected = durationInput.trim() === String(value);
-                    return (
-                      <Pressable
-                        key={value}
-                        onPress={() => setDurationInput(String(value))}
-                        style={[
-                          styles.durationPill,
-                          selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}18` },
-                        ]}>
-                        <Text
+                  <View style={styles.durationPresetRow}>
+                    {DURATION_PRESETS.map((value) => {
+                      const selected = durationInput.trim() === String(value);
+                      return (
+                        <AnimatedPressable
+                          key={value}
+                          onPress={() => setDurationInput(String(value))}
                           style={[
-                            styles.durationPillText,
-                            selected && { color: theme.primary },
+                            styles.durationPill,
+                            selected ? { borderColor: theme.primary, backgroundColor: colorWithAlpha(theme.primary, 0.16) } : null,
                           ]}>
-                          {t('common.minutesShort', { minutes: value })}
-                        </Text>
-                      </Pressable>
+                          <Text style={[styles.durationPillText, selected ? { color: theme.primary } : null]}>
+                            {t('common.minutesShort', { minutes: value })}
+                          </Text>
+                        </AnimatedPressable>
+                      );
+                    })}
+                  </View>
+                  <AnimatedPressable onPress={() => setPickerOverlay(null)} style={[styles.pickerOverlayDoneButton, { backgroundColor: theme.primary }]}>
+                    <Text style={styles.pickerOverlayDoneButtonText}>Done</Text>
+                  </AnimatedPressable>
+                </Animated.View>
+              ) : null}
+
+              {pickerOverlay === 'reminder' ? (
+                <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={styles.pickerOverlayCard}>
+                  {REMINDER_OPTIONS.map((option) => {
+                    const selected = reminderOption === option.id;
+                    return (
+                      <AnimatedPressable
+                        key={option.id}
+                        onPress={() => {
+                          setReminderOption(option.id);
+                          setPickerOverlay(null);
+                        }}
+                        style={styles.pickerInlineListItem}>
+                        <Text style={[styles.pickerInlineListText, selected ? { color: theme.primary } : null]}>{option.label}</Text>
+                        {selected ? <AppIcon color={theme.primary} name="check" size={20} /> : null}
+                      </AnimatedPressable>
                     );
                   })}
-                </View>
-                {pickerError ? <Text style={styles.pickerErrorText}>{pickerError}</Text> : null}
+                  <View style={[styles.pickerInlineListItem, styles.pickerInlineToggleRow]}>
+                    <Text style={styles.pickerInlineListText}>Constant Reminder</Text>
+                    <Switch
+                      value={constantReminder}
+                      onValueChange={setConstantReminder}
+                      trackColor={{ false: '#D3D8E4', true: colorWithAlpha(theme.primary, 0.45) }}
+                      thumbColor={constantReminder ? theme.primary : '#FFFFFF'}
+                      ios_backgroundColor="#D3D8E4"
+                    />
+                  </View>
+                </Animated.View>
+              ) : null}
 
-                <View style={styles.modalActions}>
-                  <Pressable onPress={() => setPickerOpen(false)} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={applyPicker}
-                    style={[styles.primaryButtonCompact, { backgroundColor: theme.primary }]}>
-                    <Text style={styles.primaryButtonText}>{t('common.apply')}</Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
+              {pickerOverlay === 'repeat' ? (
+                <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(140)} style={styles.pickerOverlayCard}>
+                  {REPEAT_OPTIONS.map((option) => {
+                    const selected = repeatOption === option.id;
+                    return (
+                      <AnimatedPressable
+                        key={option.id}
+                        onPress={() => {
+                          setRepeatOption(option.id);
+                          setPickerOverlay(null);
+                        }}
+                        style={styles.pickerInlineListItem}>
+                        <Text style={[styles.pickerInlineListText, selected ? { color: theme.primary } : null]}>{option.label}</Text>
+                        {selected ? <AppIcon color={theme.primary} name="check" size={20} /> : null}
+                      </AnimatedPressable>
+                    );
+                  })}
+                </Animated.View>
+              ) : null}
             </View>
           </KeyboardAvoidingView>
         </View>
@@ -1064,9 +1387,9 @@ export default function TaskEditorScreen() {
                 {isPhoneLayout ? <View style={styles.sheetGrabber} /> : null}
                 <View style={styles.paletteModalHeader}>
                   <Text style={styles.modalTitle}>{t('taskEditor.chooseCategoryColor')}</Text>
-                  <Pressable onPress={closeCategoryColorPicker} style={styles.paletteCloseButton}>
+                  <AnimatedPressable onPress={closeCategoryColorPicker} pressScale={0.9} style={styles.paletteCloseButton}>
                     <AppIcon color="#5B6581" name="close" size={20} />
-                  </Pressable>
+                  </AnimatedPressable>
                 </View>
 
                 <View
@@ -1123,11 +1446,11 @@ export default function TaskEditorScreen() {
                       autoCapitalize="characters"
                     />
                   </View>
-                  <Pressable
+                  <AnimatedPressable
                     onPress={handleSaveCategoryColor}
                     style={[styles.paletteApplyButton, { backgroundColor: theme.primary }]}>
                     <Text style={styles.primaryButtonText}>{t('common.apply')}</Text>
-                  </Pressable>
+                  </AnimatedPressable>
                 </View>
               </ScrollView>
             </View>
@@ -1144,12 +1467,12 @@ export default function TaskEditorScreen() {
             <Text style={styles.deleteConfirmTitle}>{t('taskEditor.deleteTaskTitle')}</Text>
             <Text style={styles.deleteConfirmDescription}>{t('taskEditor.deleteTaskDescription')}</Text>
             <View style={styles.deleteConfirmActions}>
-              <Pressable disabled={isSaving} onPress={() => setDeleteConfirmOpen(false)} style={[styles.deleteCancelButton, isSaving && styles.disabledButton]}>
+              <AnimatedPressable disabled={isSaving} onPress={() => setDeleteConfirmOpen(false)} style={[styles.deleteCancelButton, isSaving && styles.disabledButton]}>
                 <Text style={styles.deleteCancelButtonText}>{t('common.cancel')}</Text>
-              </Pressable>
-              <Pressable disabled={isSaving} onPress={confirmDeleteTask} style={[styles.deleteConfirmButton, isSaving && styles.disabledButton]}>
+              </AnimatedPressable>
+              <AnimatedPressable disabled={isSaving} onPress={confirmDeleteTask} style={[styles.deleteConfirmButton, isSaving && styles.disabledButton]}>
                 <Text style={styles.deleteConfirmButtonText}>{t('common.delete')}</Text>
-              </Pressable>
+              </AnimatedPressable>
             </View>
           </View>
         </View>
@@ -1283,7 +1606,7 @@ const styles = StyleSheet.create({
     color: '#1A2133',
   },
   notesInput: {
-    minHeight: 92,
+    minHeight: 52,
     textAlignVertical: 'top',
   },
   pickerButton: {
@@ -1377,11 +1700,23 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     backgroundColor: '#FDFEFF',
   },
+  categoryChipEditing: {
+    minHeight: 41,
+    justifyContent: 'center',
+  },
   categoryChipText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#2B3554',
     textAlign: 'center',
+  },
+  categoryInlineInput: {
+    width: '100%',
+    paddingVertical: 0,
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#2B3554',
   },
   categoryColorButton: {
     width: 38,
@@ -1390,6 +1725,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D5DDEF',
     backgroundColor: '#F7FAFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryInlineSaveButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#C9D5EE',
+    backgroundColor: '#F3F7FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1524,6 +1869,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 16,
     gap: 12,
+    position: 'relative',
+    overflow: 'hidden',
   },
   modalCardMobile: {
     maxWidth: 680,
@@ -1549,6 +1896,171 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: '#1A2133',
+  },
+  pickerTabSwitcher: {
+    alignSelf: 'center',
+    width: 240,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D3D9E7',
+    backgroundColor: '#ECEFF6',
+    padding: 3,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  pickerTabButton: {
+    flex: 1,
+    height: 38,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerTabButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  pickerTabButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#5F6983',
+  },
+  pickerTabButtonTextActive: {
+    color: '#1B233A',
+  },
+  pickerQuickActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pickerQuickAction: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DFE5F2',
+    backgroundColor: '#F8FAFF',
+    minHeight: 82,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  pickerQuickActionText: {
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#657087',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  pickerMonthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 0,
+  },
+  pickerMonthNavButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerMonthTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1A2133',
+  },
+  pickerWeekHeader: {
+    flexDirection: 'row',
+    marginTop: 0,
+  },
+  pickerWeekLabel: {
+    width: `${100 / 7}%`,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8F97A8',
+  },
+  pickerCalendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 0,
+  },
+  pickerDayCell: {
+    width: `${100 / 7}%`,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerDayText: {
+    fontSize: 15,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#3D4458',
+    includeFontPadding: false,
+    textAlign: 'center',
+  },
+  pickerDayTextMuted: {
+    color: '#B5BCCB',
+  },
+  pickerDayTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  pickerOptionCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E0E5F2',
+    backgroundColor: '#F8FAFF',
+    marginTop: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    gap: 0,
+  },
+  pickerOptionRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  pickerOptionRowButton: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#E3E7F3',
+  },
+  pickerOptionRowButtonLast: {
+    borderBottomWidth: 0,
+  },
+  pickerOptionLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pickerOptionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F273D',
+  },
+  pickerOptionValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8A93A7',
+  },
+  pickerOptionValueWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pickerOptionValueInput: {
+    width: 92,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D6DEEF',
+    backgroundColor: '#FFFFFF',
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#3A4668',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
   },
   dateStrip: {
     maxHeight: 88,
@@ -1622,7 +2134,7 @@ const styles = StyleSheet.create({
     color: '#44506F',
   },
   manualTimeInput: {
-    width: 120,
+    width: '100%',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#CFD7EA',
@@ -1635,30 +2147,36 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   durationInput: {
-    width: 120,
-    borderRadius: 10,
+    width: '100%',
+    minHeight: 48,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#CFD7EA',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 10,
     backgroundColor: '#F8FAFF',
-    fontSize: 13,
+    fontSize: 24,
     color: '#1A2133',
     textAlign: 'center',
     fontWeight: '700',
   },
   durationPresetRow: {
+    marginTop: 8,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    columnGap: 8,
+    rowGap: 8,
   },
   durationPill: {
+    minWidth: 72,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#CFD7EA',
     backgroundColor: '#F8FAFF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   durationPillText: {
     fontSize: 12,
@@ -1669,6 +2187,139 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#CF394A',
     fontWeight: '600',
+  },
+  pickerOverlayBackdrop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 21, 38, 0.12)',
+    zIndex: 120,
+  },
+  pickerOverlayCard: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 72,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#DDE4F2',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    zIndex: 130,
+    shadowColor: '#0D1424',
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 16,
+  },
+  pickerOverlayTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1B233A',
+    marginBottom: 8,
+  },
+  timeWheelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+  },
+  timeWheelColumnWrap: {
+    flex: 1,
+    height: WHEEL_ITEM_HEIGHT * 5,
+    borderRadius: 16,
+    backgroundColor: '#F7FAFF',
+    borderWidth: 1,
+    borderColor: '#DCE4F2',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  timeWheelSelectionBand: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    top: '50%',
+    marginTop: -(WHEEL_ITEM_HEIGHT / 2),
+    height: WHEEL_ITEM_HEIGHT,
+    borderRadius: 12,
+    backgroundColor: '#E8EEF9',
+    zIndex: 0,
+  },
+  timeWheelScroll: {
+    zIndex: 1,
+  },
+  timeWheelContent: {
+    paddingVertical: WHEEL_ITEM_HEIGHT * WHEEL_PADDING_ROWS,
+  },
+  timeWheelItem: {
+    height: WHEEL_ITEM_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeWheelText: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '500',
+    color: '#A2ACBF',
+  },
+  timeWheelTextActive: {
+    color: '#1E273D',
+    fontWeight: '700',
+  },
+  timeWheelSeparator: {
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '700',
+    color: '#4D5877',
+    marginTop: 0,
+  },
+  pickerOverlayDoneButton: {
+    marginTop: 12,
+    alignSelf: 'flex-end',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  pickerOverlayDoneButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pickerInlinePanel: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DEE4F1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  pickerInlinePanelTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A2133',
+  },
+  pickerInlineListItem: {
+    minHeight: 46,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ECF0F8',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  pickerInlineListText: {
+    fontSize: 15,
+    color: '#1F273D',
+    fontWeight: '500',
+  },
+  pickerInlineToggleRow: {
+    borderBottomWidth: 0,
+    marginTop: 4,
+    paddingTop: 4,
   },
   modalActions: {
     flexDirection: 'row',

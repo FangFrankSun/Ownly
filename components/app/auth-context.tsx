@@ -458,8 +458,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      await waitForAuthReady();
-      const popupResult = await signInWithPopup(auth!, providerInstance);
+      // Call waitForAuthReady() in parallel with the popup to avoid breaking
+      // the synchronous user-gesture chain that Safari requires for popups.
+      const [popupResult] = await Promise.all([
+        signInWithPopup(auth!, providerInstance),
+        waitForAuthReady(),
+      ]);
       applySignedInUserState(popupResult.user);
       return { ok: true };
     } catch (popupError) {

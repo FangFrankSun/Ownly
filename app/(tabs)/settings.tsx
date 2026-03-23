@@ -1,28 +1,33 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { StyleSheet, Switch, Text, View } from 'react-native';
+import { AnimatedPressable } from '@/components/ui/animated-pressable';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { useAuth } from '@/components/app/auth-context';
-import { auth } from '@/components/app/firebase-client';
 import { type LanguagePreference, useLanguage } from '@/components/app/language-context';
-import { useTasks } from '@/components/app/tasks-context';
 import { useAppTheme } from '@/components/app/theme-context';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
 
 export default function SettingsScreen() {
+  const { t } = useLanguage();
+
+  return (
+    <ScreenShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
+      <SettingsContent />
+    </ScreenShell>
+  );
+}
+
+export function SettingsContent() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
-  const { syncDebug } = useTasks();
+  const { signOut } = useAuth();
   const { effectiveLanguage, languagePreference, setLanguagePreference, t } = useLanguage();
   const { theme, themes, setThemeById } = useAppTheme();
   const [reminders, setReminders] = useState(true);
   const [sync, setSync] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
   const selectedLanguage = languagePreference ?? effectiveLanguage;
-  const firebaseProjectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? 'unknown';
-  const fullUid = user?.id ?? 'not signed in';
-  const providerIds =
-    auth?.currentUser?.providerData.map((provider) => provider.providerId).filter(Boolean).join(', ') || 'unknown';
 
   const onSignOut = async () => {
     await signOut();
@@ -30,46 +35,40 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScreenShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
+    <>
       <AppCard delay={90}>
         <SectionLabel text={t('settings.profile')} />
         <CardTitle accent={theme.secondary} icon="person" title={t('settings.you')} />
-        <Text style={styles.name}>{user?.name ?? t('common.user')}</Text>
-        <Text style={styles.email}>{user?.email ?? t('common.unknownEmail')}</Text>
-        <Text style={styles.accountMeta}>UID: {fullUid}</Text>
-        <Text style={styles.accountMeta}>Provider: {providerIds}</Text>
-        <Text style={styles.accountMeta}>Project: {firebaseProjectId}</Text>
-        <Text style={styles.accountMeta}>Tasks Path: {syncDebug.collectionPath ?? 'n/a'}</Text>
-        <Text style={styles.accountMeta}>Server Tasks: {syncDebug.serverTaskCount ?? 'n/a'}</Text>
-        <Text style={styles.accountMeta}>Server Categories: {syncDebug.serverCategoryCount ?? 'n/a'}</Text>
-        <Text style={styles.accountMeta}>Server Sync Error: {syncDebug.lastServerSyncError ?? 'none'}</Text>
-        <Pressable onPress={onSignOut} style={[styles.logoutButton, { backgroundColor: `${theme.primary}20` }]}>
+        <Text style={styles.name}>Testing Mode</Text>
+        <Text style={styles.email}>User data hidden</Text>
+        <AnimatedPressable onPress={onSignOut} style={[styles.logoutButton, { backgroundColor: `${theme.primary}20` }]}>
           <Text style={[styles.logoutButtonText, { color: theme.primary }]}>{t('settings.logout')}</Text>
-        </Pressable>
+        </AnimatedPressable>
       </AppCard>
 
       <AppCard delay={160}>
         <SectionLabel text={t('settings.theme')} />
         <CardTitle accent={theme.primary} icon="palette" title={t('settings.chooseLook')} />
         <View style={styles.themeGrid}>
-          {themes.map((option) => {
+          {themes.map((option, index) => {
             const selected = option.id === theme.id;
             return (
-              <Pressable
-                key={option.id}
-                onPress={() => setThemeById(option.id)}
-                style={[
-                  styles.themeCard,
-                  selected && styles.themeCardActive,
-                  selected && { borderColor: option.primary },
-                ]}>
-                <View style={styles.themeSwatches}>
-                  <View style={[styles.themeSwatch, { backgroundColor: option.primary }]} />
-                  <View style={[styles.themeSwatch, { backgroundColor: option.secondary }]} />
-                  <View style={[styles.themeSwatch, { backgroundColor: option.orbA }]} />
-                </View>
-                <Text style={styles.themeName}>{t(`theme.${option.id}`)}</Text>
-              </Pressable>
+              <Animated.View key={option.id} entering={FadeInDown.delay(index * 60).duration(300)}>
+                <AnimatedPressable
+                  onPress={() => setThemeById(option.id)}
+                  style={[
+                    styles.themeCard,
+                    selected && styles.themeCardActive,
+                    selected && { borderColor: option.primary },
+                  ]}>
+                  <View style={styles.themeSwatches}>
+                    <View style={[styles.themeSwatch, { backgroundColor: option.primary }]} />
+                    <View style={[styles.themeSwatch, { backgroundColor: option.secondary }]} />
+                    <View style={[styles.themeSwatch, { backgroundColor: option.orbA }]} />
+                  </View>
+                  <Text style={styles.themeName}>{t(`theme.${option.id}`)}</Text>
+                </AnimatedPressable>
+              </Animated.View>
             );
           })}
         </View>
@@ -97,25 +96,26 @@ export default function SettingsScreen() {
         <CardTitle accent={theme.primary} icon="language" title={t('settings.languageTitle')} />
         <Text style={styles.languageHint}>{t('settings.languageHint')}</Text>
         <View style={styles.languageGrid}>
-          {LANGUAGE_OPTIONS.map((option) => {
+          {LANGUAGE_OPTIONS.map((option, index) => {
             const selected = option.id === selectedLanguage;
             return (
-              <Pressable
-                key={option.id}
-                onPress={() => setLanguagePreference(option.id)}
-                style={[
-                  styles.languageCard,
-                  selected && styles.languageCardActive,
-                  selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}10` },
-                ]}>
-                <Text style={[styles.languageTitle, selected && { color: theme.primary }]}>{t(option.labelKey)}</Text>
-                <Text style={styles.languageMeta}>{option.id === 'en' ? 'EN' : '中文'}</Text>
-              </Pressable>
+              <Animated.View key={option.id} entering={FadeInDown.delay(index * 60).duration(300)}>
+                <AnimatedPressable
+                  onPress={() => setLanguagePreference(option.id)}
+                  style={[
+                    styles.languageCard,
+                    selected && styles.languageCardActive,
+                    selected && { borderColor: theme.primary, backgroundColor: `${theme.primary}10` },
+                  ]}>
+                  <Text style={[styles.languageTitle, selected && { color: theme.primary }]}>{t(option.labelKey)}</Text>
+                  <Text style={styles.languageMeta}>{option.id === 'en' ? 'EN' : '中文'}</Text>
+                </AnimatedPressable>
+              </Animated.View>
             );
           })}
         </View>
       </AppCard>
-    </ScreenShell>
+    </>
   );
 }
 
@@ -166,11 +166,6 @@ const styles = StyleSheet.create({
   email: {
     fontSize: 14,
     color: '#66708B',
-  },
-  accountMeta: {
-    fontSize: 12,
-    color: '#7A839A',
-    fontWeight: '600',
   },
   logoutButton: {
     marginTop: 6,

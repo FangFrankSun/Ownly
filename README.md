@@ -131,6 +131,8 @@ npm run macos:export:appstore
 Export a Developer ID build for direct distribution:
 
 ```bash
+TEAM_ID=YOUR_APPLE_TEAM_ID \
+MACOS_PROFILE_SPECIFIER="YOUR_DEVELOPER_ID_PROFILE_NAME" \
 npm run macos:export:developer-id
 ```
 
@@ -175,6 +177,20 @@ npm run macos:export:appstore
   - bundle ID: `com.shphfranksun.ownly`
   - platform: **Mac Catalyst / macOS**
   - capability: **Sign in with Apple**
+
+- For **Developer ID** export, Ownly also needs a **Developer ID provisioning profile** because the app uses an advanced capability (**Sign in with Apple**). Apple’s Developer ID guidance says apps using advanced capabilities need a Developer ID provisioning profile:
+  - https://developer.apple.com/support/developer-id/
+  - https://developer.apple.com/help/account/certificates/create-developer-id-certificates/
+
+- After you create and install that Developer ID provisioning profile, export the direct-download app like this:
+
+```bash
+TEAM_ID=YOUR_APPLE_TEAM_ID \
+MACOS_PROFILE_SPECIFIER="YOUR_DEVELOPER_ID_PROFILE_NAME" \
+npm run macos:export:developer-id
+
+npm run macos:dmg
+```
 
 - The number shown in some Apple account screens is often an **account/member identifier**, not the Xcode signing **Development Team ID**. The real signing team ID is usually a **10-character** value and must match the team selected in Xcode.
 - If `security find-identity -v -p codesigning` shows **0 valid identities**, signing/export cannot work yet because the required Apple signing certificates are not installed locally.

@@ -34,3 +34,23 @@ export function toIsoWithDateAndTime(baseDate: Date, hour: number, minute: numbe
 export function isValidIsoDate(value: string) {
   return !Number.isNaN(new Date(value).getTime());
 }
+
+export function formatTaskDuration(minutes: number) {
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return '0mins';
+  }
+
+  const roundedMinutes = Math.round(minutes);
+  if (roundedMinutes < 60) {
+    return `${roundedMinutes}mins`;
+  }
+
+  const hours = Math.floor(roundedMinutes / 60);
+  const remainderMinutes = roundedMinutes % 60;
+
+  if (remainderMinutes === 0) {
+    return `${hours}h`;
+  }
+
+  return `${hours}h${remainderMinutes}mins`;
+}

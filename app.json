@@ -2,14 +2,14 @@
   "expo": {
     "name": "Ownly",
     "slug": "me-app",
-    "version": "1.0.6",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/images/ownly-ios-app-icon-1024.png",
-    "scheme": "ownly",
+    "scheme": ["ownly", "com.googleusercontent.apps.946667575522-950dvl311fpri3au019lsij976c60po3"],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "buildNumber": "6",
+      "buildNumber": "7",
       "supportsTablet": true,
       "usesAppleSignIn": true,
       "bundleIdentifier": "com.shphfranksun.ownly",

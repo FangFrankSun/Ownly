@@ -2,18 +2,35 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import Reanimated, { Easing, FadeIn, FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
+import DesktopTasksView from '@/components/app/desktop-tasks-view';
+import { AnimatedPressable } from '@/components/ui/animated-pressable';
+import Reanimated, {
+  Easing,
+  FadeIn,
+  FadeInDown,
+  FadeInRight,
+  FadeOutDown,
+  FadeOutRight,
+  LinearTransition,
+  type SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { localizeTaskCategoryName } from '@/components/app/display-text';
-import { formatTaskDateTime } from '@/components/app/task-date-utils';
+import { formatTaskDateTime, formatTaskDuration } from '@/components/app/task-date-utils';
 import { useLanguage } from '@/components/app/language-context';
 import { AppCard, CardTitle, ScreenShell, SectionLabel } from '@/components/app/screen-shell';
+import { useDesktopExperience } from '@/components/app/use-desktop-experience';
 import { useAppTheme } from '@/components/app/theme-context';
 import { useTasks } from '@/components/app/tasks-context';
 import { AppIcon } from '@/components/ui/app-icon';
@@ -23,7 +40,175 @@ const COMPLETED_DROPDOWN_CLOSE_MS = 220;
 const COMPLETED_OPEN_STAGGER_MS = 60;
 const COMPLETED_CLOSE_STAGGER_MS = 95;
 
+const PARTICLE_COUNT = 8;
+const PARTICLE_ANGLES = Array.from({ length: PARTICLE_COUNT }, (_, i) => (i / PARTICLE_COUNT) * Math.PI * 2);
+
+function CompletionParticle({ color, angle, delay: particleDelay }: { color: string; angle: number; delay: number }) {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    progress.value = withDelay(particleDelay, withTiming(1, { duration: 500, easing: Easing.out(Easing.cubic) }));
+  }, [particleDelay, progress]);
+
+  const particleStyle = useAnimatedStyle(() => {
+    const distance = progress.value * 18;
+    return {
+      opacity: 1 - progress.value,
+      transform: [
+        { translateX: Math.cos(angle) * distance },
+        { translateY: Math.sin(angle) * distance },
+        { scale: 1 - progress.value * 0.6 },
+      ],
+    };
+  });
+
+  return (
+    <Reanimated.View
+      style={[
+        {
+          position: 'absolute',
+          width: 5,
+          height: 5,
+          borderRadius: 99,
+          backgroundColor: color,
+        },
+        particleStyle,
+      ]}
+    />
+  );
+}
+
+function CompletionBurst({ color }: { color: string }) {
+  const ring1 = useSharedValue(0);
+  const ring2 = useSharedValue(0);
+  const ring3 = useSharedValue(0);
+  const glow = useSharedValue(0);
+
+  useEffect(() => {
+    ring1.value = withTiming(1, { duration: 400, easing: Easing.out(Easing.cubic) });
+    ring2.value = withDelay(80, withTiming(1, { duration: 400, easing: Easing.out(Easing.cubic) }));
+    ring3.value = withDelay(160, withTiming(1, { duration: 400, easing: Easing.out(Easing.cubic) }));
+    glow.value = withSequence(
+      withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 400, easing: Easing.out(Easing.cubic) })
+    );
+  }, [glow, ring1, ring2, ring3]);
+
+  const ringStyle = (progress: SharedValue<number>) =>
+    useAnimatedStyle(() => ({
+      opacity: 1 - progress.value,
+      transform: [{ scale: 1 + progress.value * 1.8 }],
+    }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glow.value * 0.35,
+    transform: [{ scale: 1 + glow.value * 2.2 }],
+  }));
+
+  const ring1Style = ringStyle(ring1);
+  const ring2Style = ringStyle(ring2);
+  const ring3Style = ringStyle(ring3);
+
+  return (
+    <>
+      <Reanimated.View
+        style={[
+          styles.burstRing,
+          { borderColor: 'transparent', backgroundColor: color, borderWidth: 0 },
+          glowStyle,
+        ]}
+      />
+      <Reanimated.View style={[styles.burstRing, { borderColor: color }, ring1Style]} />
+      <Reanimated.View style={[styles.burstRing, { borderColor: color }, ring2Style]} />
+      <Reanimated.View style={[styles.burstRing, { borderColor: color }, ring3Style]} />
+      {PARTICLE_ANGLES.map((angle, i) => (
+        <CompletionParticle key={i} color={color} angle={angle} delay={i * 25} />
+      ))}
+    </>
+  );
+}
+
+function AnimatedCheckbox({
+  done,
+  completing,
+  color,
+  onPress,
+  disabled,
+  title,
+}: {
+  done: boolean;
+  completing: boolean;
+  color: string;
+  onPress: () => void;
+  disabled: boolean;
+  title: string;
+}) {
+  const checkScale = useSharedValue(done ? 1 : 0);
+  const bounceScale = useSharedValue(1);
+  const [showBurst, setShowBurst] = useState(false);
+  const prevDone = useRef(done);
+
+  useEffect(() => {
+    if (done && !prevDone.current) {
+      bounceScale.value = withSequence(
+        withSpring(1.3, { damping: 8, stiffness: 400 }),
+        withSpring(1, { damping: 10, stiffness: 300 })
+      );
+      checkScale.value = withSpring(1, { damping: 12, stiffness: 300 });
+      setShowBurst(true);
+      const timeout = setTimeout(() => setShowBurst(false), 600);
+      prevDone.current = done;
+      return () => clearTimeout(timeout);
+    }
+    if (!done && prevDone.current) {
+      checkScale.value = withTiming(0, { duration: 150 });
+      bounceScale.value = 1;
+    }
+    prevDone.current = done;
+  }, [bounceScale, checkScale, done]);
+
+  const containerStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: bounceScale.value }],
+  }));
+
+  const checkmarkStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: checkScale.value }],
+    opacity: checkScale.value,
+  }));
+
+  return (
+    <AnimatedPressable
+      accessibilityLabel={`Mark ${title} as ${done ? 'not done' : 'done'}`}
+      disabled={disabled}
+      onPress={onPress}
+      pressScale={0.85}
+      style={styles.checkboxOuter}>
+      <Reanimated.View
+        style={[
+          styles.check,
+          done && { borderColor: color, backgroundColor: color },
+          completing && { borderColor: color },
+          containerStyle,
+        ]}>
+        <Reanimated.View style={checkmarkStyle}>
+          <AppIcon color="#FFFFFF" name="check" size={14} />
+        </Reanimated.View>
+        {showBurst ? <CompletionBurst color={color} /> : null}
+      </Reanimated.View>
+    </AnimatedPressable>
+  );
+}
+
 export default function TasksScreen() {
+  const { isDesktopExperience } = useDesktopExperience();
+  if (isDesktopExperience) {
+    return <DesktopTasksView />;
+  }
+
+  return <MobileTasksScreen />;
+}
+
+function MobileTasksScreen() {
   const router = useRouter();
   const { effectiveLanguage, localeTag, t } = useLanguage();
   const { theme } = useAppTheme();
@@ -42,11 +227,20 @@ export default function TasksScreen() {
 
   const doneCount = tasks.filter((task) => task.done).length;
   const progressPercent = tasks.length === 0 ? 0 : Math.round((doneCount / tasks.length) * 100);
+  const progressAnim = useSharedValue(0);
+
+  useEffect(() => {
+    progressAnim.value = withTiming(progressPercent, { duration: 600, easing: Easing.out(Easing.cubic) });
+  }, [progressAnim, progressPercent]);
+
+  const progressBarStyle = useAnimatedStyle(() => ({
+    width: `${progressAnim.value}%`,
+  }));
   const activeTasks = useMemo(() => tasks.filter((task) => !task.done), [tasks]);
   const completedTasks = useMemo(() => tasks.filter((task) => task.done), [tasks]);
   const visibleCompletedTasks = completedTasks.slice(0, visibleCompletedCount);
-  const categoryNameById = useMemo(
-    () => new Map(categories.map((category) => [category.id, category.name])),
+  const categoryById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
     [categories]
   );
   const strikeWidth = strikeAnim.interpolate({
@@ -106,7 +300,7 @@ export default function TasksScreen() {
     strikeAnim.setValue(0);
     Animated.timing(strikeAnim, {
       toValue: 1,
-      duration: 280,
+      duration: 350,
       useNativeDriver: false,
     }).start(({ finished }) => {
       if (!finished) {
@@ -187,10 +381,12 @@ export default function TasksScreen() {
   };
 
   const renderTaskItem = (task: (typeof tasks)[number], inCompletedSection: boolean) => {
+    const category = categoryById.get(task.categoryId);
     const categoryName = localizeTaskCategoryName(
-      categoryNameById.get(task.categoryId) ?? t('tasks.general'),
+      category?.name ?? t('tasks.general'),
       effectiveLanguage
     );
+    const categoryColor = category?.color ?? '#4C6FFF';
     const isCompleting = completingTaskId === task.id && !task.done;
 
     return (
@@ -201,37 +397,46 @@ export default function TasksScreen() {
           inCompletedSection && styles.taskItemCompleted,
           inCompletedSection && { borderColor: `${theme.primary}22` },
         ]}>
-        <Pressable
-          accessibilityLabel={`${task.done ? 'Mark' : 'Mark'} ${task.title} as ${task.done ? 'not done' : 'done'}`}
-          disabled={Boolean(completingTaskId)}
+        <AnimatedCheckbox
+          done={task.done}
+          completing={isCompleting}
+          color={theme.primary}
           onPress={() => handleToggleTask(task.id, task.done)}
-          style={[
-            styles.check,
-            task.done && styles.checkOn,
-            task.done && { borderColor: theme.primary, backgroundColor: theme.primary },
-          ]}>
-          {task.done ? <AppIcon color="#FFFFFF" name="check" size={14} /> : null}
-        </Pressable>
+          disabled={Boolean(completingTaskId)}
+          title={task.title}
+        />
 
         <View style={styles.rowTextWrap}>
-          <View style={styles.rowTitleWrap}>
-            <Text style={[styles.rowTitle, task.done && styles.rowTitleDone]}>{task.title}</Text>
+          <View style={styles.rowTitleRow}>
+            <View style={styles.rowTitleWrap}>
+              <Text style={[styles.rowTitle, task.done && styles.rowTitleDone]}>{task.title}</Text>
+            </View>
+            <View style={styles.rowTitleRight}>
+              <Text style={styles.taskDurationText}>{formatTaskDuration(task.durationMinutes)}</Text>
+              <View style={[styles.categoryBadge, { backgroundColor: `${categoryColor}22`, borderColor: `${categoryColor}55` }]}>
+                <View style={[styles.categoryDot, { backgroundColor: categoryColor }]} />
+                <Text style={[styles.categoryBadgeText, { color: categoryColor }]}>{categoryName}</Text>
+              </View>
+            </View>
             {isCompleting ? (
               <Animated.View style={[styles.strikeLine, { width: strikeWidth, backgroundColor: theme.primary }]} />
             ) : null}
           </View>
-          <Text style={[styles.rowSubtitle, task.done && styles.rowSubtitleDone]}>
-            {formatTaskDateTime(task.scheduledAt, localeTag)} · {t('common.minutesShort', { minutes: task.durationMinutes })} · {categoryName}
-            {task.repeatable ? ` · ${t('tasks.repeats')}` : ''}
-          </Text>
+          <View style={styles.rowMetaRow}>
+            <Text style={[styles.rowSubtitle, task.done && styles.rowSubtitleDone]}>
+              {formatTaskDateTime(task.scheduledAt, localeTag)}
+              {task.repeatable ? ` · ${t('tasks.repeats')}` : ''}
+            </Text>
+          </View>
           {task.notes ? <Text style={[styles.notesText, task.done && styles.notesTextDone]}>{task.notes}</Text> : null}
         </View>
 
-        <Pressable
+        <AnimatedPressable
           onPress={() => router.push({ pathname: '/task-editor', params: { taskId: task.id } })}
+          pressScale={0.9}
           style={styles.editButton}>
           <AppIcon color="#3D4A72" name="edit" size={16} />
-        </Pressable>
+        </AnimatedPressable>
       </View>
     );
   };
@@ -242,8 +447,9 @@ export default function TasksScreen() {
       title={t('tasks.title')}
       subtitle={t('tasks.subtitle')}
       floatingAction={
-        <Pressable
+        <AnimatedPressable
           onPress={() => router.push('/task-editor')}
+          pressScale={0.9}
           style={[
             styles.fab,
             {
@@ -252,7 +458,7 @@ export default function TasksScreen() {
             },
           ]}>
           <AppIcon color="#FFFFFF" name="add" size={30} />
-        </Pressable>
+        </AnimatedPressable>
       }>
       <AppCard delay={90}>
         <SectionLabel text={t('tasks.progress')} />
@@ -261,7 +467,7 @@ export default function TasksScreen() {
           {t('tasks.finished', { done: doneCount, total: tasks.length })}
         </Text>
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: theme.primary }]} />
+          <Reanimated.View style={[styles.progressFill, { backgroundColor: theme.primary }, progressBarStyle]} />
         </View>
         <Text style={styles.metaText}>{t('tasks.completePercent', { percent: progressPercent })}</Text>
       </AppCard>
@@ -269,7 +475,15 @@ export default function TasksScreen() {
       <AppCard delay={160}>
         <SectionLabel text={t('tasks.todo')} />
         {activeTasks.length === 0 ? <Text style={styles.emptyText}>{t('tasks.noActive')}</Text> : null}
-        {activeTasks.map((task) => renderTaskItem(task, false))}
+        {activeTasks.map((task, index) => (
+          <Reanimated.View
+            key={`active-${task.id}`}
+            entering={FadeInRight.delay(index * 50).duration(300).easing(Easing.out(Easing.cubic))}
+            exiting={FadeOutRight.duration(200).easing(Easing.in(Easing.cubic))}
+            layout={LinearTransition.duration(220)}>
+            {renderTaskItem(task, false)}
+          </Reanimated.View>
+        ))}
       </AppCard>
 
       <View
@@ -279,7 +493,7 @@ export default function TasksScreen() {
         <AppCard delay={220}>
           <View style={styles.completedHeaderRow}>
             <SectionLabel text={t('tasks.completed')} />
-            <Pressable
+            <AnimatedPressable
               disabled={isAnimatingCompletedToggle.current}
               onPress={toggleCompletedVisibility}
               style={[styles.completedToggleButton, { borderColor: `${theme.primary}33` }]}>
@@ -291,7 +505,7 @@ export default function TasksScreen() {
                 name={showCompleted ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
                 size={18}
               />
-            </Pressable>
+            </AnimatedPressable>
           </View>
           <View style={styles.completedBody}>
             {(showCompleted || isHidingCompleted) && visibleCompletedTasks.length > 0 ? (
@@ -399,6 +613,12 @@ const styles = StyleSheet.create({
   taskItemCompleted: {
     backgroundColor: '#F2F5FC',
   },
+  checkboxOuter: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   check: {
     width: 24,
     height: 24,
@@ -408,19 +628,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F6F8FE',
+    overflow: 'visible',
   },
-  checkOn: {
-    borderColor: '#4361EE',
-    backgroundColor: '#4361EE',
+  burstRing: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 99,
+    borderWidth: 2,
   },
   rowTextWrap: {
     flex: 1,
-    gap: 2,
+    gap: 4,
   },
   rowTitleWrap: {
+    flex: 1,
     position: 'relative',
     justifyContent: 'center',
     minHeight: 22,
+  },
+  rowTitleRow: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rowTitleRight: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '56%',
   },
   rowTitle: {
     fontSize: 15,
@@ -438,6 +676,12 @@ const styles = StyleSheet.create({
     height: 2,
     borderRadius: 999,
   },
+  rowMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
   rowSubtitle: {
     fontSize: 13,
     color: '#68708A',
@@ -445,10 +689,34 @@ const styles = StyleSheet.create({
   rowSubtitleDone: {
     color: '#7B839C',
   },
+  taskDurationText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#5F6D8E',
+  },
+  categoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1.5,
+  },
+  categoryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 99,
+  },
+  categoryBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+  },
   notesText: {
     fontSize: 12,
     color: '#7A829B',
-    marginTop: 2,
+    marginTop: 0,
   },
   notesTextDone: {
     color: '#8A91A6',

@@ -327,7 +327,7 @@ function caloriesForDuration(caloriesPerHour: number, durationMinutes: number) {
   return Math.round((caloriesPerHour * durationMinutes) / 60);
 }
 
-export default function ExerciseScreen() {
+export default function ExerciseScreen({ embedded = false }: { embedded?: boolean } = {}) {
   const { width } = useWindowDimensions();
   const { effectiveLanguage, t } = useLanguage();
   const { theme } = useAppTheme();
@@ -475,8 +475,8 @@ export default function ExerciseScreen() {
     deleteExerciseSession(sessionId);
   };
 
-  return (
-    <ScreenShell title={t('exercise.title')} subtitle={t('exercise.subtitle')}>
+  const content = (
+    <>
       <AppCard delay={90}>
         <SectionLabel text={t('exercise.dailyBurn')} />
         <CardTitle accent={theme.primary} icon="local-fire-department" title={t('exercise.todayBurned')} />
@@ -731,6 +731,16 @@ export default function ExerciseScreen() {
           );
         })}
       </AppCard>
+    </>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <ScreenShell title={t('exercise.title')} subtitle={t('exercise.subtitle')}>
+      {content}
     </ScreenShell>
   );
 }

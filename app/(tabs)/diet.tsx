@@ -284,7 +284,7 @@ function EntryActionButton({ icon, onPress, tone = 'neutral' }: { icon: Componen
   );
 }
 
-export default function DietScreen() {
+export default function DietScreen({ embedded = false }: { embedded?: boolean } = {}) {
   const { width } = useWindowDimensions();
   const { effectiveLanguage, t } = useLanguage();
   const { theme } = useAppTheme();
@@ -500,8 +500,8 @@ export default function DietScreen() {
     }
   };
 
-  return (
-    <ScreenShell title={t('diet.title')} subtitle={t('diet.subtitle')}>
+  const content = (
+    <>
       <AppCard delay={80}>
         <SectionLabel text={t('diet.caloriesLeft')} />
         <CardTitle accent="#2CB67D" icon="restaurant-menu" title={t('diet.title')} />
@@ -751,6 +751,16 @@ export default function DietScreen() {
           </View>
         ))}
       </AppCard>
+    </>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <ScreenShell title={t('diet.title')} subtitle={t('diet.subtitle')}>
+      {content}
     </ScreenShell>
   );
 }

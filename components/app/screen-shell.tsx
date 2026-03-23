@@ -1,8 +1,17 @@
 import type { ComponentProps, ReactNode, RefObject } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { useEffect } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { AppIcon } from '@/components/ui/app-icon';
 import { useAppTheme } from './theme-context';
+import { useDesktopExperience } from './use-desktop-experience';
 
 type ScreenShellProps = {
   title: string;
@@ -19,30 +28,60 @@ type CardProps = {
 
 export function ScreenShell({ title, subtitle, children, floatingAction, scrollRef }: ScreenShellProps) {
   const { theme } = useAppTheme();
+  const { isDesktopExperience } = useDesktopExperience();
+  const isDesktop = isDesktopExperience;
+  const isFocused = useIsFocused();
+  const opacity = useSharedValue(1);
+  const translateY = useSharedValue(0);
+
+  // Re-trigger a subtle fade each time this tab becomes active.
+  // Start from high opacity (never 0) to avoid white-screen flashes.
+  useEffect(() => {
+    if (isFocused) {
+      opacity.value = 0.97;
+      translateY.value = 2;
+      opacity.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
+      translateY.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.quad) });
+    }
+  }, [isFocused, opacity, translateY]);
+
+  const enterStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
 
   return (
     <View style={[styles.page, { backgroundColor: theme.pageBackground }]}>
-      <View pointerEvents="none" style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} />
-      <View pointerEvents="none" style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} />
-      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Animated.View entering={FadeInUp.duration(500)}>
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-        </Animated.View>
-        {children}
-      </ScrollView>
-      {floatingAction ? (
-        <View pointerEvents="box-none" style={styles.floatingActionWrap}>
-          {floatingAction}
-        </View>
-      ) : null}
+      {!isDesktop ? <View pointerEvents="none" style={[styles.orb, styles.orbA, { backgroundColor: theme.orbA }]} /> : null}
+      {!isDesktop ? <View pointerEvents="none" style={[styles.orb, styles.orbB, { backgroundColor: theme.orbB }]} /> : null}
+      <Animated.View style={[styles.pageFill, enterStyle]}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[styles.scrollContent, isDesktop ? styles.scrollContentDesktop : null]}
+          showsVerticalScrollIndicator={false}>
+          <View>
+            <Text style={[styles.title, isDesktop ? styles.titleDesktop : null]}>{title}</Text>
+            {subtitle ? <Text style={[styles.subtitle, isDesktop ? styles.subtitleDesktop : null]}>{subtitle}</Text> : null}
+          </View>
+          {children}
+        </ScrollView>
+        {floatingAction ? (
+          <View pointerEvents="box-none" style={styles.floatingActionWrap}>
+            {floatingAction}
+          </View>
+        ) : null}
+      </Animated.View>
     </View>
   );
 }
 
 export function AppCard({ children, delay = 0 }: CardProps) {
+  const { isDesktopExperience } = useDesktopExperience();
+  const isDesktop = isDesktopExperience;
   return (
-    <Animated.View entering={FadeInDown.duration(500).delay(delay)} style={styles.card}>
+    <Animated.View
+      entering={FadeInDown.duration(isDesktop ? 180 : 350).delay(delay).easing(Easing.out(Easing.quad))}
+      style={[styles.card, isDesktop ? styles.cardDesktop : null]}>
       {children}
     </Animated.View>
   );
@@ -76,11 +115,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F2F5FC',
   },
+  pageFill: {
+    flex: 1,
+  },
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 72,
     paddingBottom: 110,
     gap: 14,
+  },
+  scrollContentDesktop: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 24,
+    gap: 12,
   },
   title: {
     fontSize: 34,
@@ -88,11 +136,19 @@ const styles = StyleSheet.create({
     letterSpacing: -0.7,
     color: '#182031',
   },
+  titleDesktop: {
+    fontSize: 38,
+    letterSpacing: -0.6,
+  },
   subtitle: {
     marginTop: 6,
     fontSize: 16,
     color: '#5B6274',
     marginBottom: 8,
+  },
+  subtitleDesktop: {
+    color: '#7A7F90',
+    marginBottom: 2,
   },
   card: {
     borderRadius: 24,
@@ -106,6 +162,15 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 5,
     gap: 12,
+  },
+  cardDesktop: {
+    borderRadius: 10,
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#ECEAF0',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   cardTitleRow: {
     flexDirection: 'row',

@@ -15,14 +15,16 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyB0NpA3R9tA9-9fvFzf73uMjiLjWvG2-QY",
-        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "ownly-auth.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "ownly.cloud",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "ownly-auth",
         "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "ownly-auth.firebasestorage.app",
         "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "946667575522",
         "EXPO_PUBLIC_FIREBASE_APP_ID": "1:946667575522:web:3e003c59d1f2220105a6bb",
         "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-8G9646EFMT",
         "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "946667575522-950dvl311fpri3au019lsij976c60po3.apps.googleusercontent.com",
-        "EXPO_PUBLIC_FACEBOOK_APP_ID": "2215077279295885"
+        "EXPO_PUBLIC_FACEBOOK_APP_ID": "2215077279295885",
+        "EXPO_PUBLIC_APP_URL": "https://ownly.cloud",
+        "EXPO_PUBLIC_FIREBASE_AUTHORIZED_DOMAINS": "ownly.cloud,ownly-auth.firebaseapp.com,ownly-auth.web.app"
       }
     }
   },

@@ -503,8 +503,9 @@ async function writeTaskStore(userId: string, store: TaskStore) {
 async function saveTaskStoreToServer(userId: string, store: TaskStore) {
   const remoteStore = createRemoteTaskStore(store);
   const projectId = getFirebaseProjectId();
+  const firestoreDb = db;
 
-  if (!db) {
+  if (!firestoreDb) {
     if (Platform.OS === 'web' && auth && projectId) {
       await saveTaskStoreToServerViaRestOnly(userId, store);
 
@@ -514,7 +515,7 @@ async function saveTaskStoreToServer(userId: string, store: TaskStore) {
     throw new Error('Cloud task sync is unavailable right now.');
   }
 
-  const userRef = doc(db, 'users', userId);
+  const userRef = doc(firestoreDb, 'users', userId);
 
   const persistRemoteStore = async () => {
     await withFirestoreTimeout(
@@ -531,7 +532,7 @@ async function saveTaskStoreToServer(userId: string, store: TaskStore) {
     );
 
     if (Platform.OS !== 'web') {
-      await waitForFirestoreWriteSync(db, FIRESTORE_TASK_ACK_TIMEOUT_MS);
+      await waitForFirestoreWriteSync(firestoreDb, FIRESTORE_TASK_ACK_TIMEOUT_MS);
     }
   };
 
@@ -626,7 +627,7 @@ async function saveTaskStoreToServer(userId: string, store: TaskStore) {
     await persistRemoteStore();
   } catch (firstError) {
     try {
-      await recoverFirestoreNetwork(db);
+      await recoverFirestoreNetwork(firestoreDb);
       await persistRemoteStore();
       if (__DEV__) {
         console.warn('Task save recovered after retry', firstError);
@@ -1188,7 +1189,10 @@ export function TasksProvider({ children }: { children: ReactNode }) {
               toFirestoreWriteErrorMessage(error, 'Failed to observe synced task updates.'),
               buildCurrentStore()
             );
-            void recoverFirestoreNetwork(db).catch(() => undefined);
+            const firestoreDb = db;
+            if (firestoreDb) {
+              void recoverFirestoreNetwork(firestoreDb).catch(() => undefined);
+            }
             setTimeout(() => {
               setListenerRetryTick((previous) => previous + 1);
             }, 1500);
