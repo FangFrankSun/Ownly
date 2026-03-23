@@ -2,7 +2,7 @@
   "expo": {
     "name": "Ownly",
     "slug": "me-app",
-    "version": "1.0.9",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/ownly-ios-app-icon-1024.png",
     "scheme": ["ownly", "com.googleusercontent.apps.946667575522-950dvl311fpri3au019lsij976c60po3"],
